@@ -163,8 +163,10 @@ hsr_prp_config_init(&cfg, HSR_PRP_MODE_HSR, "eth0", "eth1");
 hsr_prp_config_setup_ext_dispatch(ext_dispatch_fd);
 
 /* Populate BPF maps after loading programs */
+uint8_t local_mac[6] = { /* interface MAC */ };
 hsr_prp_config_apply_maps(&cfg, tc_ring_config_fd,
-                          ring_ports_fd, prp_ports_fd);
+                          ring_ports_fd, prp_ports_fd,
+                          local_mac_fd, local_mac);
 
 /* Attach TC egress programs */
 hsr_prp_config_attach_tc("eth0", egress_prog_fd);

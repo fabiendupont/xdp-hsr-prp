@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 
 /*
- * node_hsr_forward — HSR ring forwarding (XDP, index 12).
+ * node_hsr_forward — HSR ring forwarding (XDP, index 15).
  *
  * Forwards HSR-tagged frames to the peer ring port.
  * Received on port A → forward to port B, and vice versa.
@@ -64,11 +64,21 @@ XGL_NODE(node_hsr_forward)
 	pkt_len = (__u32)(data_end - data);
 	XGL_STATS_INC_RX(hsr_prp_stats, NODE_HSR_FORWARD, pkt_len);
 
-	/*
-	 * Do not forward frames originated by us.
-	 * The source MAC check happens at a higher level;
-	 * here we just forward if we have a valid peer.
-	 */
+	/* Do not forward frames originated by us (prevents ring loops) */
+	{
+		__u32 mac_key = 0;
+		__u8 *our_mac = bpf_map_lookup_elem(&local_mac, &mac_key);
+		if (our_mac &&
+		    our_mac[0] == eth->h_source[0] &&
+		    our_mac[1] == eth->h_source[1] &&
+		    our_mac[2] == eth->h_source[2] &&
+		    our_mac[3] == eth->h_source[3] &&
+		    our_mac[4] == eth->h_source[4] &&
+		    our_mac[5] == eth->h_source[5]) {
+			XGL_STATS_INC_DROP(hsr_prp_stats, NODE_HSR_FORWARD);
+			XGL_DROP();
+		}
+	}
 
 	/* Determine peer port from ingress ifindex */
 	ingress_ifindex = ctx->ingress_ifindex;

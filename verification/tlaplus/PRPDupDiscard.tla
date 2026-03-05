@@ -28,11 +28,12 @@ VARIABLES
     lan_a_frames,   \* Frames in transit on LAN A
     lan_b_frames,   \* Frames in transit on LAN B
     delivered,      \* delivered[n] : set of {src, seq} delivered to node n
+    deliver_count,  \* deliver_count[n] : function from {src, seq} -> Nat
     lan_a_up,       \* Boolean: is LAN A operational?
     lan_b_up        \* Boolean: is LAN B operational?
 
 vars == <<seq_counter, dup_table, lan_a_frames, lan_b_frames,
-          delivered, lan_a_up, lan_b_up>>
+          delivered, deliver_count, lan_a_up, lan_b_up>>
 
 TypeOK ==
     /\ seq_counter \in [Nodes -> 0..MaxSeq]
@@ -47,6 +48,7 @@ Init ==
     /\ lan_a_frames = {}
     /\ lan_b_frames = {}
     /\ delivered = [n \in Nodes |-> {}]
+    /\ deliver_count = [n \in Nodes |-> [e \in [src: Nodes, seq: 0..MaxSeq] |-> 0]]
     /\ lan_a_up = TRUE
     /\ lan_b_up = TRUE
 
@@ -62,7 +64,7 @@ Send(n) ==
        /\ seq_counter' = [seq_counter EXCEPT ![n] = seq + 1]
        /\ lan_a_frames' = lan_a_frames \cup {frame}
        /\ lan_b_frames' = lan_b_frames \cup {frame}
-       /\ UNCHANGED <<dup_table, delivered, lan_a_up, lan_b_up>>
+       /\ UNCHANGED <<dup_table, delivered, deliver_count, lan_a_up, lan_b_up>>
 
 \* ReceiveA: destination receives a frame from LAN A
 ReceiveA(n, frame) ==
@@ -76,7 +78,7 @@ ReceiveA(n, frame) ==
            \* Duplicate — discard
            /\ lan_a_frames' = lan_a_frames \ {frame}
            /\ UNCHANGED <<seq_counter, dup_table, lan_b_frames,
-                          delivered, lan_a_up, lan_b_up>>
+                          delivered, deliver_count, lan_a_up, lan_b_up>>
        ELSE
            \* First copy — accept
            /\ LET evicted == IF Cardinality(dup_table[n]) >= TableSize
@@ -87,6 +89,9 @@ ReceiveA(n, frame) ==
               /\ dup_table' = [dup_table EXCEPT ![n] = new_table]
               /\ delivered' = [delivered EXCEPT ![n] =
                                delivered[n] \cup {entry}]
+              /\ deliver_count' = [deliver_count EXCEPT
+                                    ![n] = [deliver_count[n] EXCEPT
+                                             ![entry] = @ + 1]]
               /\ lan_a_frames' = lan_a_frames \ {frame}
               /\ UNCHANGED <<seq_counter, lan_b_frames, lan_a_up, lan_b_up>>
 
@@ -101,7 +106,7 @@ ReceiveB(n, frame) ==
        THEN
            /\ lan_b_frames' = lan_b_frames \ {frame}
            /\ UNCHANGED <<seq_counter, dup_table, lan_a_frames,
-                          delivered, lan_a_up, lan_b_up>>
+                          delivered, deliver_count, lan_a_up, lan_b_up>>
        ELSE
            /\ LET evicted == IF Cardinality(dup_table[n]) >= TableSize
                               THEN {CHOOSE e \in dup_table[n] : TRUE}
@@ -111,6 +116,9 @@ ReceiveB(n, frame) ==
               /\ dup_table' = [dup_table EXCEPT ![n] = new_table]
               /\ delivered' = [delivered EXCEPT ![n] =
                                delivered[n] \cup {entry}]
+              /\ deliver_count' = [deliver_count EXCEPT
+                                    ![n] = [deliver_count[n] EXCEPT
+                                             ![entry] = @ + 1]]
               /\ lan_b_frames' = lan_b_frames \ {frame}
               /\ UNCHANGED <<seq_counter, lan_a_frames, lan_a_up, lan_b_up>>
 
@@ -120,14 +128,14 @@ FailLanA ==
     /\ lan_a_up' = FALSE
     /\ lan_a_frames' = {}
     /\ UNCHANGED <<seq_counter, dup_table, lan_b_frames,
-                   delivered, lan_b_up>>
+                   delivered, deliver_count, lan_b_up>>
 
 FailLanB ==
     /\ lan_b_up
     /\ lan_b_up' = FALSE
     /\ lan_b_frames' = {}
     /\ UNCHANGED <<seq_counter, dup_table, lan_a_frames,
-                   delivered, lan_a_up>>
+                   delivered, deliver_count, lan_a_up>>
 
 \* --- Specification ---
 
@@ -158,11 +166,20 @@ DupTableConsistency ==
     \A n \in Nodes :
         delivered[n] \subseteq dup_table[n]
 
+\* No frame delivered more than once to the same destination
+NoDuplicateDelivery ==
+    \A n \in Nodes :
+        \A e \in [src: Nodes, seq: 0..MaxSeq] :
+            deliver_count[n][e] <= 1
+
 \* --- Liveness Properties ---
 
-\* Under single LAN failure, frames eventually reach destination
+\* Under single LAN failure, frames eventually reach destination.
+\* Guarded by [](lan_a_up \/ lan_b_up): only checked on behaviors
+\* where at least one LAN remains up throughout (dual failure is
+\* out of scope for PRP guarantees).
 EventualDelivery ==
-    (lan_a_up \/ lan_b_up) =>
+    [](lan_a_up \/ lan_b_up) =>
         (\A seq_val \in 0..MaxSeq :
             (seq_counter[Src] > seq_val) ~>
                 [src |-> Src, seq |-> seq_val] \in delivered[Dst])

@@ -3,6 +3,7 @@
 #include <hsr_prp/hsr_prp_userspace.h>
 #include <hsr_prp/hsr_prp_node_ids.h>
 
+#include <stdlib.h>
 #include <string.h>
 #include <errno.h>
 #include <bpf/libbpf.h>
@@ -24,41 +25,69 @@ struct egl_node_stats_us {
 int hsr_prp_stats_read(int stats_map_fd, int node_id,
 		       struct hsr_prp_stats *out)
 {
-	struct egl_node_stats_us stats;
+	struct egl_node_stats_us *percpu;
+	int ncpus;
 	uint32_t key;
 
 	if (stats_map_fd < 0 || !out)
 		return -EINVAL;
 
+	ncpus = libbpf_num_possible_cpus();
+	if (ncpus < 0)
+		return ncpus;
+
+	percpu = calloc((size_t)ncpus, sizeof(*percpu));
+	if (!percpu)
+		return -ENOMEM;
+
 	key = (uint32_t)node_id;
 
-	if (bpf_map_lookup_elem(stats_map_fd, &key, &stats) != 0)
-		return -errno;
+	if (bpf_map_lookup_elem(stats_map_fd, &key, percpu) != 0) {
+		int err = errno;
+		free(percpu);
+		return -err;
+	}
 
-	out->rx_count = stats.in_count;
-	out->rx_bytes = stats.in_bytes;
-	out->tx_count = stats.out_count;
-	out->tx_bytes = stats.out_bytes;
-	out->dup_drops = stats.drops;
-	out->errors = stats.errors;
+	memset(out, 0, sizeof(*out));
+	for (int i = 0; i < ncpus; i++) {
+		out->rx_count += percpu[i].in_count;
+		out->rx_bytes += percpu[i].in_bytes;
+		out->tx_count += percpu[i].out_count;
+		out->tx_bytes += percpu[i].out_bytes;
+		out->dup_drops += percpu[i].drops;
+		out->errors += percpu[i].errors;
+	}
 
+	free(percpu);
 	return 0;
 }
 
 int hsr_prp_stats_reset(int stats_map_fd, int node_id)
 {
-	struct egl_node_stats_us stats;
+	struct egl_node_stats_us *percpu;
+	int ncpus;
 	uint32_t key;
 
 	if (stats_map_fd < 0)
 		return -EINVAL;
 
+	ncpus = libbpf_num_possible_cpus();
+	if (ncpus < 0)
+		return ncpus;
+
+	percpu = calloc((size_t)ncpus, sizeof(*percpu));
+	if (!percpu)
+		return -ENOMEM;
+
 	key = (uint32_t)node_id;
-	memset(&stats, 0, sizeof(stats));
 
-	if (bpf_map_update_elem(stats_map_fd, &key, &stats, BPF_ANY) != 0)
-		return -errno;
+	if (bpf_map_update_elem(stats_map_fd, &key, percpu, BPF_ANY) != 0) {
+		int err = errno;
+		free(percpu);
+		return -err;
+	}
 
+	free(percpu);
 	return 0;
 }
 

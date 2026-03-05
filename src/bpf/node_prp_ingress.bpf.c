@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 
 /*
- * node_prp_ingress — PRP ingress processing (XDP, index 13).
+ * node_prp_ingress — PRP ingress processing (XDP, index 16).
  *
  * Receives frames from PRP-designated ports (dispatched from
  * node_port_rx via prp_ports map, ISSUE-3).
@@ -25,17 +25,6 @@
 #include <bpf/bpf_endian.h>
 
 char LICENSE[] SEC("license") = "BSD-3-Clause";
-
-static __always_inline __u8 port_from_ifindex(__u32 ifindex)
-{
-	struct ring_port_config *cfg;
-
-	cfg = bpf_map_lookup_elem(&tc_ring_config, &ifindex);
-	if (cfg)
-		return cfg->path_id;
-
-	return 0;
-}
 
 XGL_NODE(node_prp_ingress)
 {

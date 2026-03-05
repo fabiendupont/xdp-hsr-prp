@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 
 /*
- * node_hsr_ingress — HSR ingress processing (XDP, index 11).
+ * node_hsr_ingress — HSR ingress processing (XDP, index 14).
  *
  * Receives frames with EtherType 0x892F dispatched from node_eth_input
  * via ext_dispatch. Parses the HSR tag, performs duplicate detection,
@@ -22,25 +22,6 @@
 #include <bpf/bpf_endian.h>
 
 char LICENSE[] SEC("license") = "BSD-3-Clause";
-
-/*
- * Determine port index (0=A, 1=B) from ingress ifindex.
- * Looks up ring_ports DEVMAP to check which port this is.
- */
-static __always_inline __u8 port_from_ifindex(__u32 ifindex)
-{
-	/*
-	 * Convention: port A uses key 0, port B uses key 1 in ring_ports.
-	 * We check tc_ring_config which maps local ifindex to path_id.
-	 */
-	struct ring_port_config *cfg;
-
-	cfg = bpf_map_lookup_elem(&tc_ring_config, &ifindex);
-	if (cfg)
-		return cfg->path_id;
-
-	return 0;
-}
 
 XGL_NODE(node_hsr_ingress)
 {
@@ -78,11 +59,12 @@ XGL_NODE(node_hsr_ingress)
 	tag = (struct hsr_tag *)((void *)(eth + 1));
 
 	/* Validate LSDU size against actual packet length.
-	 * LSDU size = total frame - 14 (Ethernet) - 6 (HSR tag). */
+	 * LSDU size = frame length after Ethernet header (includes HSR tag).
+	 * Strict equality rejects truncated or padded-beyond-LSDU frames. */
 	__u16 lsdu_size = hsr_tag_get_lsdu_size(tag);
 	__u16 expected = (__u16)(pkt_len - sizeof(struct ethhdr));
 
-	if (lsdu_size > expected) {
+	if (lsdu_size != expected) {
 		XGL_STATS_INC_DROP(hsr_prp_stats, NODE_HSR_INGRESS);
 		XGL_DROP();
 	}

@@ -162,6 +162,20 @@ int hsr_prp_config_setup_ext_dispatch(int ext_dispatch_fd)
 }
 
 /*
+ * Populate the local_mac map used by node_hsr_forward for
+ * source MAC filtering (prevents forwarding our own frames).
+ */
+static int populate_local_mac(int map_fd, const uint8_t *mac)
+{
+	uint32_t key = 0;
+
+	if (bpf_map_update_elem(map_fd, &key, mac, BPF_ANY) != 0)
+		return -errno;
+
+	return 0;
+}
+
+/*
  * Populate BPF maps for the configured HSR/PRP mode.
  *
  * Map FDs are obtained from the xdp-graph-lib graph after loading
@@ -169,11 +183,14 @@ int hsr_prp_config_setup_ext_dispatch(int ext_dispatch_fd)
  *   tc_ring_config_fd = xgl_graph_get_map_fd(g, "tc_ring_config");
  *   ring_ports_fd     = xgl_graph_get_map_fd(g, "ring_ports");
  *   prp_ports_fd      = xgl_graph_get_map_fd(g, "prp_ports");
+ *   local_mac_fd      = xgl_graph_get_map_fd(g, "local_mac");
  */
 int hsr_prp_config_apply_maps(const struct hsr_prp_config *cfg,
 			      int tc_ring_config_fd,
 			      int ring_ports_fd,
-			      int prp_ports_fd)
+			      int prp_ports_fd,
+			      int local_mac_fd,
+			      const uint8_t *mac)
 {
 	int ret;
 
@@ -198,6 +215,13 @@ int hsr_prp_config_apply_maps(const struct hsr_prp_config *cfg,
 	/* PRP ports: PRP mode needs per-interface dispatch (ISSUE-3) */
 	if (cfg->mode == HSR_PRP_MODE_PRP && prp_ports_fd >= 0) {
 		ret = populate_prp_ports(prp_ports_fd, cfg);
+		if (ret != 0)
+			return ret;
+	}
+
+	/* Local MAC: HSR mode needs source MAC filtering in forward */
+	if (cfg->mode == HSR_PRP_MODE_HSR && local_mac_fd >= 0 && mac) {
+		ret = populate_local_mac(local_mac_fd, mac);
 		if (ret != 0)
 			return ret;
 	}

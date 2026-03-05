@@ -30,9 +30,10 @@ VARIABLES
     dup_table,      \* dup_table[n] : set of {src, seq} pairs seen by node n
     in_transit,     \* Set of frames currently in the ring
     delivered,      \* delivered[n] : set of {src, seq} delivered to node n
+    deliver_count,  \* deliver_count[n] : function from {src, seq} -> Nat
     failed_link     \* The currently failed link (or {} if none)
 
-vars == <<seq_counter, dup_table, in_transit, delivered, failed_link>>
+vars == <<seq_counter, dup_table, in_transit, delivered, deliver_count, failed_link>>
 
 \* Ring topology: n1 -- n2 -- n3 -- n1
 Links == {{"n1", "n2"}, {"n2", "n3"}, {"n3", "n1"}}
@@ -60,6 +61,7 @@ Init ==
     /\ dup_table = [n \in Nodes |-> {}]
     /\ in_transit = {}
     /\ delivered = [n \in Nodes |-> {}]
+    /\ deliver_count = [n \in Nodes |-> [e \in [src: Nodes, seq: 0..MaxSeq] |-> 0]]
     /\ failed_link = {}
 
 \* --- Actions ---
@@ -76,7 +78,7 @@ Send(n) ==
        IN
        /\ seq_counter' = [seq_counter EXCEPT ![n] = seq + 1]
        /\ in_transit' = in_transit \cup {frame_cw, frame_ccw}
-       /\ UNCHANGED <<dup_table, delivered, failed_link>>
+       /\ UNCHANGED <<dup_table, delivered, deliver_count, failed_link>>
 
 \* Receive: node receives a frame from in_transit
 Receive(n, frame) ==
@@ -89,7 +91,7 @@ Receive(n, frame) ==
        THEN
            \* Duplicate — discard
            /\ in_transit' = in_transit \ {frame}
-           /\ UNCHANGED <<seq_counter, dup_table, delivered, failed_link>>
+           /\ UNCHANGED <<seq_counter, dup_table, delivered, deliver_count, failed_link>>
        ELSE
            \* First copy — accept
            /\ LET evicted == IF Cardinality(dup_table[n]) >= TableSize
@@ -99,9 +101,13 @@ Receive(n, frame) ==
               IN
               /\ dup_table' = [dup_table EXCEPT ![n] = new_table]
               /\ IF n = Dst /\ frame.src = Src
-                 THEN delivered' = [delivered EXCEPT ![n] =
-                                    delivered[n] \cup {entry}]
-                 ELSE delivered' = delivered
+                 THEN /\ delivered' = [delivered EXCEPT ![n] =
+                                        delivered[n] \cup {entry}]
+                      /\ deliver_count' = [deliver_count EXCEPT
+                                            ![n] = [deliver_count[n] EXCEPT
+                                                     ![entry] = @ + 1]]
+                 ELSE /\ delivered' = delivered
+                      /\ deliver_count' = deliver_count
               \* Forward around the ring (if not source)
               /\ IF n # frame.src
                  THEN LET next_node == IF frame.path = "A"
@@ -120,7 +126,7 @@ FailLink(link) ==
     /\ failed_link = {}
     /\ link \in Links
     /\ failed_link' = link
-    /\ UNCHANGED <<seq_counter, dup_table, in_transit, delivered>>
+    /\ UNCHANGED <<seq_counter, dup_table, in_transit, delivered, deliver_count>>
 
 \* --- Specification ---
 
@@ -147,6 +153,12 @@ DeliveryIntegrity ==
 DupTableConsistency ==
     \A n \in Nodes :
         delivered[n] \subseteq dup_table[n]
+
+\* No frame delivered more than once to the same destination
+NoDuplicateDelivery ==
+    \A n \in Nodes :
+        \A e \in [src: Nodes, seq: 0..MaxSeq] :
+            deliver_count[n][e] <= 1
 
 \* --- Liveness Properties ---
 

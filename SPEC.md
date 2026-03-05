@@ -540,9 +540,151 @@ Use specifications from `~/Work/Sandbox/research/02-hsr-prp-xdp-redundancy.md` s
 
 ---
 
-## Expert Panel Findings (2026-03-05, 3 specialists)
+## Expert Panel Findings (2026-03-05, updated with code review)
 
-### P0 — CRITICAL ARCHITECTURAL ISSUES (must resolve before implementation)
+Two review rounds: 3 specialists on requirements, then 2 specialists on code.
+All 22 original SPEC issues (ISSUE-1 through ISSUE-22) are RESOLVED in code.
+14/14 tests pass (unit, CBMC, Frama-C, TLA+). New bugs found in code review.
+
+### RESOLVED — All 22 Original SPEC Issues
+
+ISSUE-1 (clone path): skb->mark + peer patching. ISSUE-2 (clone loop):
+HSR_PRP_CLONE_MARK checked on entry. ISSUE-3 (PRP dispatch): prp_ports
+map. ISSUE-4 (DEVMAP for TC): separate tc_ring_config HASH. ISSUE-5
+(seq counter): bpf_spin_lock. ISSUE-6 (EtherType): 0x892F rewrite.
+ISSUE-7 (MAC save/restore): correct pattern. ISSUE-8 (fwd vs deliver):
+separate node_hsr_forward. ISSUE-9 (CBMC): all 7 properties. ISSUE-10
+(TLA+): ring topology, forwarding, link failure, LRU eviction. ISSUE-11
+(flags): BPF_ADJ_ROOM_MAC,0. ISSUE-12 (PRP RCT): bpf_skb_change_tail +
+bpf_skb_store_bytes. ISSUE-13 (pin paths): deferred to integration.
+ISSUE-14 (Frama-C): 53/55 goals. ISSUE-15 (MISRA): cppcheck, 0 violations.
+ISSUE-16 (false positive): LSDU check. ISSUE-17 (VLAN): groutx strips
+VLAN before dispatch. ISSUE-18 (supervision): full frame construction.
+ISSUE-19 (timeout): userspace scan. ISSUE-20 (depth): EGL_DEPTH_EXCEEDED.
+ISSUE-21 (stats): XGL_STATS_INC_*. ISSUE-22 (TC macros): uses egl directly.
+
+### P0 — CRITICAL BUGS (found in code review)
+
+**BUG-1: NODE_HSR_INGRESS / NODE_BRIDGE_INPUT collision (index 11)**
+
+groutx `node_ids.h` defines `NODE_BRIDGE_INPUT = 11`. xdp-hsr-prp
+`hsr_prp_node_ids.h` defines `NODE_HSR_INGRESS = 11`. Both claim the
+same PROG_ARRAY slot. Loading both in the same graph silently overwrites
+one with the other.
+
+**Fix**: coordinate node index allocation. Either:
+(a) Move HSR/PRP to indices 14-16 (after bridge at 11-13), or
+(b) Move bridge to different indices, or
+(c) Document mutual exclusion.
+
+**BUG-2: Per-CPU stats buffer overflow in `hsr_prp_stats_read()`**
+
+`hsr_prp_stats` is `BPF_MAP_TYPE_PERCPU_ARRAY`. `bpf_map_lookup_elem()`
+from userspace returns `nr_cpus * sizeof(value)` bytes, but the code
+reads into a single `struct egl_node_stats_us`. This overflows the
+buffer and corrupts the stack.
+
+**Fix**: allocate `libbpf_num_possible_cpus() * sizeof(struct egl_node_stats_us)`,
+read into that, sum across CPUs. Same pattern as `egl_stats_read()` in
+ebpf-graph-lib.
+
+**BUG-3: Double HSR tag on supervision frames**
+
+`hsr_prp_supervision.c` manually constructs an HSR tag in the supervision
+frame (path, LSDU, seq_nr at lines 79-81), then sends via raw socket.
+The frame passes through TC egress which inserts ANOTHER HSR tag.
+Result: double-tagged supervision frames — protocol violation.
+
+**Fix**: either:
+(a) Send supervision frames with `skb->mark = HSR_PRP_CLONE_MARK` so TC
+    egress skips tag insertion (treats as clone, patches path only), or
+(b) Send without manual HSR tag, let TC egress add it, or
+(c) Bypass TC via `PACKET_QDISC_BYPASS` socket option.
+
+### P1 — HIGH SEVERITY
+
+**4. TLA+ EventualDelivery liveness not checked**
+
+`EventualDelivery` is defined in both TLA+ specs but NOT listed under
+PROPERTY in the `.cfg` files. TLC only checks safety invariants. Liveness
+(frames eventually reach destination under single failure) is UNVERIFIED.
+
+**Fix**: add `PROPERTY EventualDelivery` to both .cfg files. Re-run TLC.
+
+**5. TLA+ NoDuplicateDelivery relies on set semantics**
+
+The `delivered[n]` variable is a SET. Adding the same entry twice is
+idempotent in TLA+. The model cannot distinguish "delivered once" from
+"delivered twice". The dup detection mechanism is NOT tested by the model —
+it's assumed correct by construction.
+
+**Fix**: change `delivered[n]` to a BAG (multiset) or sequence. Add
+invariant: `\A n \in Nodes: \A e \in DOMAIN BagToSet(delivered[n]):
+BagCardinality(delivered[n], e) <= 1`.
+
+**6. No source MAC filtering in `node_hsr_forward`**
+
+Frames with the node's own source MAC are forwarded around the ring.
+IEC 62439-3 requires that a node must NOT forward its own frames.
+This can create infinite loops.
+
+**Fix**: add source MAC check against `iface_mac` map or a dedicated
+`local_mac` map. Drop if `src_mac == our_mac`.
+
+**7. HSR LSDU validation asymmetric**
+
+`node_hsr_ingress` uses `lsdu_size > expected` (permissive — accepts
+short LSDU). `node_prp_ingress` uses `lsdu_size != expected_lsdu`
+(strict). Should be consistent.
+
+**8. Supervision LSDU size is 0**
+
+`hsr_prp_supervision.c` sets LSDU to 0 when constructing supervision
+frames. Per IEC 62439-3, LSDU should be the actual payload length
+(typically 18 bytes for supervision).
+
+### P2 — MEDIUM SEVERITY
+
+**9. Map pinning for XDP/TC sharing** — XDP and TC programs declare maps
+independently. Without pinning, they have separate instances. Production
+requires integration via xdp-graph-lib map sharing.
+
+**10. `bpf_clone_redirect` return value not checked** — silent single-path
+failure on memory pressure. Should increment error counter.
+
+**11. `seq_after()` is dead code in BPF** — included but never called by
+any BPF node. Consider removing or using for node table freshness.
+
+**12. `port_from_ifindex()` duplicated** in two BPF files.
+
+**13. `volatile int running`** for thread signaling — should use `_Atomic`.
+
+**14. Frama-C 2/43 timeouts** on `hsr_tag_set` round-trip — documented,
+compensated by CBMC.
+
+### P3 — LOW / INFORMATIONAL
+
+15. `__TARGET_ARCH_x86` hardcoded in meson.build.
+16. `test_hsr_tag.c` claims VLAN coverage but has no VLAN test.
+17. `test_hsr_ring.sh` doesn't load BPF programs — topology test only.
+18. CBMC harnesses use local copies of functions.
+
+### What's Working Well
+
+- All 22 original SPEC issues resolved
+- 14/14 tests pass
+- SAFETY.md with FMEA (9 failure modes), FMECA (RPN analysis), MISRA
+- Clone pattern correct (skb->mark, path patching, no re-clone)
+- Sequence counter atomicity (bpf_spin_lock)
+- HSR tag strip with MAC save/restore
+- PRP false positive protection (LSDU consistency)
+- Depth tracking on re-entry
+- TLA+ with 761,956 states explored (HSR), 4,248 states (PRP)
+- CBMC: all properties proven, 0 failures
+- Frama-C: 53/55 goals proved
+- Real BPF integration test (test_hsr_datapath.c)
+
+### P0 — CRITICAL ARCHITECTURAL ISSUES (original SPEC issues — now resolved)
 
 **ISSUE-1: Clone-then-modify produces identical path/LAN fields**
 

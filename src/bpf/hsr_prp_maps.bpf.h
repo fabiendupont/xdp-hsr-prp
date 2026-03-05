@@ -73,6 +73,34 @@ struct {
 } prp_ports SEC(".maps");
 
 /*
+ * Determine port index (0=A, 1=B) from ingress ifindex.
+ * Looks up tc_ring_config which maps local ifindex to path_id.
+ */
+static __always_inline __u8 port_from_ifindex(__u32 ifindex)
+{
+	struct ring_port_config *cfg;
+
+	cfg = bpf_map_lookup_elem(&tc_ring_config, &ifindex);
+	if (cfg)
+		return cfg->path_id;
+
+	return 0;
+}
+
+/*
+ * Local MAC address for source MAC filtering.
+ * Key: 0, Value: 6-byte MAC address.
+ * Used by node_hsr_forward to drop frames originated by this node,
+ * preventing forwarding our own frames around the ring.
+ */
+struct {
+	__uint(type, BPF_MAP_TYPE_ARRAY);
+	__uint(max_entries, 1);
+	__type(key, __u32);
+	__type(value, __u8[ETH_ALEN]);
+} local_mac SEC(".maps");
+
+/*
  * Per-node statistics using ebpf-graph-lib stats infrastructure.
  */
 EGL_DECLARE_STATS(hsr_prp_stats);

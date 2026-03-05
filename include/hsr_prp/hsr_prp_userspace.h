@@ -48,7 +48,9 @@ int hsr_prp_config_apply(const struct hsr_prp_config *cfg);
 int hsr_prp_config_apply_maps(const struct hsr_prp_config *cfg,
 			      int tc_ring_config_fd,
 			      int ring_ports_fd,
-			      int prp_ports_fd);
+			      int prp_ports_fd,
+			      int local_mac_fd,
+			      const uint8_t *mac);
 
 /*
  * ext_dispatch setup — registers EtherType 0x892F -> NODE_HSR_INGRESS

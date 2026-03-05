@@ -4,8 +4,8 @@
 
 #include <hsr_prp/hsr_prp_userspace.h>
 #include <hsr_prp/hsr_prp_common.h>
-#include <hsr_prp/hsr_tag.h>
 
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -24,7 +24,7 @@ struct hsr_prp_supervision {
 	int      sock_a;
 	int      sock_b;
 	pthread_t thread;
-	volatile int running;
+	atomic_int running;
 };
 
 static int create_raw_socket(uint32_t ifindex)
@@ -71,17 +71,16 @@ static int send_supervision_frame(struct hsr_prp_supervision *sup, int sock,
 	memcpy(eth->h_source, sup->local_mac, ETH_ALEN);
 
 	if (sup->cfg.mode == HSR_PRP_MODE_HSR) {
-		/* HSR supervision: EtherType = 0x892F, encapsulated = 0x88FB */
-		struct hsr_tag *tag;
-
-		eth->h_proto = htons(HSR_ETHERTYPE);
-
-		tag = (struct hsr_tag *)(frame + sizeof(struct ethhdr));
-		hsr_tag_set(tag, HSR_PATH_A, 0, sup->sup_seq_nr,
-			    HSR_SUP_ETHERTYPE);
+		/*
+		 * HSR supervision: send with EtherType 0x88FB.
+		 * TC egress (node_hsr_egress) will insert the HSR tag
+		 * and rewrite EtherType to 0x892F. Do NOT manually add
+		 * the HSR tag here — that would result in a double tag.
+		 */
+		eth->h_proto = htons(HSR_SUP_ETHERTYPE);
 
 		payload = (struct hsr_sup_payload *)(frame +
-			sizeof(struct ethhdr) + sizeof(struct hsr_tag));
+			sizeof(struct ethhdr));
 		payload->sup_path = 0x00;
 		payload->sup_ver = HSR_SUP_VERSION;
 		payload->seq_nr = htons(sup->sup_seq_nr);
@@ -89,7 +88,7 @@ static int send_supervision_frame(struct hsr_prp_supervision *sup, int sock,
 		payload->tlv1.length = HSR_TLV_LEN_MAC;
 		memcpy(payload->mac_danp, sup->local_mac, ETH_ALEN);
 
-		frame_len = sizeof(struct ethhdr) + sizeof(struct hsr_tag) +
+		frame_len = sizeof(struct ethhdr) +
 			    sizeof(struct hsr_sup_payload);
 	} else {
 		/* PRP supervision: EtherType = 0x88FB (no HSR tag) */

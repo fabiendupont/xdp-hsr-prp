@@ -189,7 +189,8 @@ int node_hsr_egress(struct __sk_buff *skb)
 	 */
 	skb->mark = HSR_PRP_CLONE_MARK;
 
-	bpf_clone_redirect(skb, cfg->peer_ifindex, 0);
+	/* Clone failure is non-fatal: original still transmits on local port */
+	(void)bpf_clone_redirect(skb, cfg->peer_ifindex, 0);
 
 	/* Clear mark on the original — it transmits on the local port */
 	skb->mark = 0;

@@ -5,14 +5,15 @@
 
 /*
  * Extension node indices in the groutx XDP graph.
- * Indices 11-29 are reserved for extension nodes (see groutx node_ids.h).
+ * Indices 11-13 are used by groutx core (NODE_BRIDGE_INPUT, etc.).
+ * Indices 14-29 are available for extension nodes.
  *
  * These are XDP graph nodes only. HSR/PRP egress are TC programs
  * attached separately and do not occupy graph indices.
  */
-#define NODE_HSR_INGRESS     11
-#define NODE_HSR_FORWARD     12
-#define NODE_PRP_INGRESS     13
+#define NODE_HSR_INGRESS     14
+#define NODE_HSR_FORWARD     15
+#define NODE_PRP_INGRESS     16
 
 /*
  * groutx core node indices (referenced by HSR/PRP nodes).
