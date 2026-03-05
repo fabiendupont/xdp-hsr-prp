@@ -33,8 +33,8 @@ tagging scheme.
                    └─────────────────────┘         └──────────────────┘
 
   PRP ports ───────┤  node_prp_ingress   │         │ node_prp_egress  ├──── LAN A/B
-  (per-ifindex      │  - check RCT suffix │         │ - append RCT     │
-   dispatch)       │  - validate LSDU   │         │ - clone to peer  │
+  (per-ifindex     │  - check RCT suffix │         │ - append RCT     │
+   dispatch)       │  - validate LSDU    │         │ - clone to peer  │
                    │  - dup detect       │         │ - patch LAN_ID   │
                    │  - strip trailer    │         │                  │
                    └─────────────────────┘         └──────────────────┘
