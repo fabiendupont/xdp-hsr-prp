@@ -157,11 +157,27 @@ if tlc.found()
         timeout: 600)
 endif
 
-# --- Integration test ---
+# --- Integration tests ---
 
 test('hsr_ring', find_program(
          meson.current_source_dir() / 'tests' / 'integration' /
          'test_hsr_ring.sh'),
+    suite: 'integration',
+    is_parallel: false,
+    timeout: 120)
+
+# Privileged C integration test — loads BPF programs, sends real frames
+test_hsr_datapath = executable('test_hsr_datapath',
+    'tests/integration/test_hsr_datapath.c',
+    include_directories: inc,
+    link_with: hsr_prp_lib,
+    dependencies: [xgl_dep, libbpf_dep, libelf_dep, thread_dep],
+    c_args: extra_c_args + [
+        '-DBPF_OBJ_DIR="' + meson.current_build_dir() + '"',
+        '-Wno-missing-prototypes',
+    ])
+
+test('hsr_datapath', test_hsr_datapath,
     suite: 'integration',
     is_parallel: false,
     timeout: 120)
