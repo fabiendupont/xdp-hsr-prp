@@ -58,13 +58,14 @@ ebpf-graph-lib (egl_*)    ← generic: PROG_ARRAY, DAG, stats
 
 ## Node Indices
 
-Extension nodes occupy reserved indices 11-29 in the groutx XDP graph:
+Extension nodes occupy reserved indices 14-29 in the groutx XDP graph
+(indices 11-13 are used by groutx core):
 
 | Index | Node               | Type | Description                     |
 |-------|--------------------|------|---------------------------------|
-| 11    | node_hsr_ingress   | XDP  | HSR tag parse, dup detect, strip|
-| 12    | node_hsr_forward   | XDP  | Ring forwarding (XDP_REDIRECT)  |
-| 13    | node_prp_ingress   | XDP  | PRP RCT check, dup detect, strip|
+| 14    | node_hsr_ingress   | XDP  | HSR tag parse, dup detect, strip|
+| 15    | node_hsr_forward   | XDP  | Ring forwarding (XDP_REDIRECT)  |
+| 16    | node_prp_ingress   | XDP  | PRP RCT check, dup detect, strip|
 | —     | node_hsr_egress    | TC   | HSR tag insert, clone to peer   |
 | —     | node_prp_egress    | TC   | PRP RCT append, clone to peer   |
 
@@ -77,11 +78,13 @@ Extension nodes occupy reserved indices 11-29 in the groutx XDP graph:
 | ring_ports       | DEVMAP_HASH  | XDP forwarding (bpf_redirect_map)     |
 | tc_ring_config   | HASH         | TC peer ifindex + path_id             |
 | prp_ports        | HASH         | PRP per-interface dispatch            |
+| local_mac        | ARRAY        | Source MAC for forward filtering       |
 | hsr_prp_stats    | PERCPU_ARRAY | Per-node statistics                   |
 | hsr_prp_depth    | PERCPU_ARRAY | Tail call depth tracking              |
 
-Maps shared between XDP and TC programs (dup_table, seq_counters)
-are shared via BPF map pinning.
+Maps shared between XDP and TC programs (seq_counters, tc_ring_config)
+are shared via BPF map pinning at `/sys/fs/bpf/egl/hsr_prp/`. The
+instance API handles pinning and reuse automatically.
 
 ## Building
 
@@ -124,6 +127,7 @@ sequence counters).
 | test_seq_after  | 7 properties of 16-bit circular comparison      |
 | test_hsr_tag    | HSR tag set/get, wire format, round-trip, VLAN  |
 | test_prp_rct    | PRP RCT set/get, valid/invalid, false positives |
+| test_nodetable  | Add/lookup/remove, eviction, timeout, dump      |
 
 ### CBMC Proofs
 
@@ -137,46 +141,65 @@ sequence counters).
 
 | Spec             | Model                | States  | Properties              |
 |------------------|----------------------|---------|-------------------------|
-| HSRDupDiscard    | 3-node ring + failure| 761,956 | TypeOK, DeliveryIntegrity, DupTableConsistency |
-| PRPDupDiscard    | Dual LAN + failure   | 4,248   | TypeOK, DeliveryIntegrity, DupTableConsistency |
+| HSRDupDiscard    | 3-node ring + failure| —       | TypeOK, DeliveryIntegrity, DupTableConsistency, NoDuplicateDelivery, EventualDelivery |
+| PRPDupDiscard    | Dual LAN + failure   | —       | TypeOK, DeliveryIntegrity, DupTableConsistency, NoDuplicateDelivery, EventualDelivery |
 
 ### Integration Tests (root required)
 
 | Test              | What it verifies                               |
 |-------------------|------------------------------------------------|
-| tc_egress_loads   | BPF object loads, program found                |
-| map_population    | tc_ring_config and seq_counters read/write     |
-| hsr_tag_insertion | TC egress produces 0x892F frame, correct fields|
-| seq_increments    | Sequence numbers 0, 1, 2 across 3 frames      |
-| prp_rct_append    | PRP trailer with 0x88FB suffix, correct LAN_ID |
+| tc_egress_loads    | BPF object loads, program found                |
+| map_population     | tc_ring_config and seq_counters read/write     |
+| hsr_tag_insertion  | TC egress produces 0x892F frame, correct fields|
+| seq_increments     | Sequence numbers 0, 1, 2 across 3 frames      |
+| prp_rct_append     | PRP trailer with 0x88FB suffix, correct LAN_ID |
+| instance_lifecycle | Instance create/destroy with veth pair         |
 
 ## Userspace API
+
+### Instance API (recommended)
+
+The instance API handles the full lifecycle: graph creation, BPF
+program loading with pinned map sharing, map population, XDP/TC
+attachment, and supervision management.
 
 ```c
 #include <hsr_prp/hsr_prp_userspace.h>
 
-/* Initialize configuration */
+/* Configure */
 struct hsr_prp_config cfg;
 hsr_prp_config_init(&cfg, HSR_PRP_MODE_HSR, "eth0", "eth1");
 
-/* Register HSR EtherType in groutx ext_dispatch */
-hsr_prp_config_setup_ext_dispatch(ext_dispatch_fd);
+/* Create instance (loads all BPF programs, populates maps) */
+struct hsr_prp_instance *inst =
+    hsr_prp_instance_create(&cfg, "/usr/lib/bpf");
 
-/* Populate BPF maps after loading programs */
-uint8_t local_mac[6] = { /* interface MAC */ };
-hsr_prp_config_apply_maps(&cfg, tc_ring_config_fd,
-                          ring_ports_fd, prp_ports_fd,
-                          local_mac_fd, local_mac);
+/* Attach XDP + TC to both ports */
+hsr_prp_instance_attach(inst);
 
-/* Attach TC egress programs */
-hsr_prp_config_attach_tc("eth0", egress_prog_fd);
-hsr_prp_config_attach_tc("eth1", egress_prog_fd);
+/* Start supervision frame TX */
+hsr_prp_instance_start(inst);
 
-/* Start supervision frame generation */
-struct hsr_prp_supervision *sup =
-    hsr_prp_supervision_create(&cfg, local_mac);
-hsr_prp_supervision_start(sup);
+/* Start supervision frame RX + node table maintenance */
+struct hsr_prp_nodetable *nt = hsr_prp_instance_get_nodetable(inst);
+struct hsr_prp_sup_rx *rx = hsr_prp_sup_rx_create(&cfg, nt);
+hsr_prp_sup_rx_start(rx);
+
+/* Read stats */
+struct hsr_prp_stats stats;
+hsr_prp_instance_get_stats(inst, NODE_HSR_INGRESS, &stats);
+
+/* Teardown */
+hsr_prp_sup_rx_stop(rx);
+hsr_prp_sup_rx_destroy(rx);
+hsr_prp_instance_destroy(inst);
 ```
+
+### Low-level API
+
+Individual functions for manual control over BPF loading and map
+population are available via `hsr_prp_config_*`, `hsr_prp_stats_*`,
+and `hsr_prp_supervision_*`. See `hsr_prp_userspace.h` for details.
 
 ## Known Limitations
 

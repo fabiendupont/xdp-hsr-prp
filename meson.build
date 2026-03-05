@@ -109,9 +109,17 @@ test_prp_rct = executable('test_prp_rct',
     include_directories: inc,
     c_args: extra_c_args)
 
+test_nodetable = executable('test_nodetable',
+    'tests/unit/test_nodetable.c',
+    include_directories: inc,
+    link_with: hsr_prp_lib,
+    dependencies: [xgl_dep, libbpf_dep, libelf_dep, thread_dep],
+    c_args: extra_c_args + ['-Wno-missing-prototypes'])
+
 test('seq_after', test_seq_after, suite: 'unit')
 test('hsr_tag', test_hsr_tag, suite: 'unit')
 test('prp_rct', test_prp_rct, suite: 'unit')
+test('nodetable', test_nodetable, suite: 'unit')
 
 # --- CBMC verification ---
 

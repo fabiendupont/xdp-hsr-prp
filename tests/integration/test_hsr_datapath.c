@@ -176,16 +176,20 @@ static int send_raw_frame(int sock, unsigned int ifindex,
 }
 
 /*
- * Receive a frame, skipping outgoing captures (PACKET_OUTGOING).
- * AF_PACKET sockets see both ingress and egress; we only want ingress.
- * This avoids picking up clones from bpf_clone_redirect().
+ * Receive a frame, skipping outgoing captures and frames that don't
+ * match the expected source MAC. AF_PACKET sockets see both ingress
+ * and egress, plus kernel-generated frames (IPv6 ND, etc.).
+ * Filtering by source MAC ensures we only pick up our test frame.
+ *
+ * If expect_src is NULL, any ingress frame is accepted.
  */
-static ssize_t recv_raw_frame(int sock, void *buf, size_t buflen)
+static ssize_t recv_raw_frame(int sock, void *buf, size_t buflen,
+			      const uint8_t *expect_src)
 {
 	struct sockaddr_ll addr;
 	socklen_t addrlen;
 
-	for (int attempt = 0; attempt < 16; attempt++) {
+	for (int attempt = 0; attempt < 32; attempt++) {
 		addrlen = sizeof(addr);
 		ssize_t n = recvfrom(sock, buf, buflen, 0,
 				     (struct sockaddr *)&addr, &addrlen);
@@ -195,6 +199,13 @@ static ssize_t recv_raw_frame(int sock, void *buf, size_t buflen)
 		/* Skip outgoing frames (clones, loopback) */
 		if (addr.sll_pkttype == PACKET_OUTGOING)
 			continue;
+
+		/* Filter by source MAC if requested */
+		if (expect_src && n >= (ssize_t)sizeof(struct ethhdr)) {
+			struct ethhdr *eth = buf;
+			if (memcmp(eth->h_source, expect_src, ETH_ALEN) != 0)
+				continue;
+		}
 
 		return n;
 	}
@@ -368,7 +379,8 @@ static void test_tc_egress_inserts_tag(void)
 
 	/* Receive on veth_b — should now have HSR tag */
 	uint8_t rxbuf[128];
-	ssize_t rxlen = recv_raw_frame(rx_sock, rxbuf, sizeof(rxbuf));
+	ssize_t rxlen = recv_raw_frame(rx_sock, rxbuf, sizeof(rxbuf),
+				       src_mac);
 
 	close(tx_sock);
 	close(rx_sock);
@@ -494,7 +506,8 @@ static void test_seq_counter_increments(void)
 		send_raw_frame(tx_sock, idx_a, frame, sizeof(frame));
 
 		uint8_t rxbuf[128];
-		ssize_t rxlen = recv_raw_frame(rx_sock, rxbuf, sizeof(rxbuf));
+		ssize_t rxlen = recv_raw_frame(rx_sock, rxbuf, sizeof(rxbuf),
+					       src_mac);
 
 		if (rxlen < (ssize_t)(sizeof(struct ethhdr) +
 				      sizeof(struct hsr_tag))) {
@@ -620,7 +633,8 @@ static void test_prp_egress_appends_rct(void)
 
 	/* Receive on veth_b — should have PRP RCT appended */
 	uint8_t rxbuf[128];
-	ssize_t rxlen = recv_raw_frame(rx_sock, rxbuf, sizeof(rxbuf));
+	ssize_t rxlen = recv_raw_frame(rx_sock, rxbuf, sizeof(rxbuf),
+				       src_mac);
 
 	close(tx_sock);
 	close(rx_sock);
@@ -739,6 +753,56 @@ static void test_ext_dispatch_setup(void)
 	PASS();
 }
 
+/* --- Test: Instance lifecycle --- */
+
+static void test_instance_lifecycle(void)
+{
+	TEST("instance_lifecycle");
+	REQUIRE_BPF();
+
+	const char *veth_a = "hsr_ia";
+	const char *veth_b = "hsr_ib";
+
+	delete_link(veth_a);
+	delete_link(veth_b);
+
+	if (create_veth_pair(veth_a, veth_b) != 0)
+		FAIL("cannot create veth pair");
+
+	set_link_up(veth_a);
+	set_link_up(veth_b);
+
+	struct hsr_prp_config cfg;
+	int ret = hsr_prp_config_init(&cfg, HSR_PRP_MODE_HSR,
+				      veth_a, veth_b);
+	if (ret != 0) {
+		delete_link(veth_a);
+		FAIL("config_init failed");
+	}
+
+	struct hsr_prp_instance *inst =
+		hsr_prp_instance_create(&cfg, BPF_OBJ_DIR);
+	if (!inst) {
+		delete_link(veth_a);
+		FAIL("instance_create returned NULL");
+	}
+
+	/* Verify nodetable is accessible */
+	struct hsr_prp_nodetable *nt =
+		hsr_prp_instance_get_nodetable(inst);
+	if (!nt) {
+		hsr_prp_instance_destroy(inst);
+		delete_link(veth_a);
+		FAIL("get_nodetable returned NULL");
+	}
+
+	/* Clean teardown */
+	hsr_prp_instance_destroy(inst);
+	delete_link(veth_a);
+
+	PASS();
+}
+
 /* --- Test: Config validation --- */
 
 static void test_config_validation(void)
@@ -785,6 +849,7 @@ int main(void)
 	test_tc_egress_inserts_tag();
 	test_seq_counter_increments();
 	test_prp_egress_appends_rct();
+	test_instance_lifecycle();
 
 	printf("\n");
 	printf("  %d tests: %d passed, %d failed, %d skipped\n",
