@@ -1,0 +1,27 @@
+# Build directories
+builddir*/
+build/
+
+# Object files
+*.o
+*.a
+*.so
+*.so.*
+*.bpf.o
+
+# Editor/IDE
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+compile_commands.json
+
+# TLC state files
+verification/tlaplus/states/
+*_TTrace_*.tla
+*_TTrace_*.bin
+
+# OS
+.DS_Store
+Thumbs.db
