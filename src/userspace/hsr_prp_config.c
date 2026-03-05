@@ -1,12 +1,17 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 
+#define _DEFAULT_SOURCE
+
 #include <hsr_prp/hsr_prp_userspace.h>
 #include <hsr_prp/hsr_prp_common.h>
 #include <hsr_prp/hsr_prp_node_ids.h>
 
 #include <string.h>
 #include <errno.h>
+#include <stdio.h>
 #include <net/if.h>
+#include <bpf/libbpf.h>
+#include <bpf/bpf.h>
 
 int hsr_prp_config_init(struct hsr_prp_config *cfg,
 			enum hsr_prp_mode mode,
@@ -59,7 +64,116 @@ int hsr_prp_config_validate(const struct hsr_prp_config *cfg)
 	return 0;
 }
 
-int hsr_prp_config_apply(const struct hsr_prp_config *cfg)
+/*
+ * Populate the tc_ring_config map with peer port information.
+ * Each port maps to its peer's ifindex and its own path_id.
+ */
+static int populate_tc_ring_config(int map_fd,
+				   const struct hsr_prp_config *cfg)
+{
+	struct ring_port_config port_a_cfg = {
+		.peer_ifindex = cfg->port_b_ifindex,
+		.path_id = 0,  /* path A / LAN A */
+	};
+	struct ring_port_config port_b_cfg = {
+		.peer_ifindex = cfg->port_a_ifindex,
+		.path_id = 1,  /* path B / LAN B */
+	};
+	int ret;
+
+	ret = bpf_map_update_elem(map_fd, &cfg->port_a_ifindex,
+				  &port_a_cfg, BPF_ANY);
+	if (ret != 0)
+		return -errno;
+
+	ret = bpf_map_update_elem(map_fd, &cfg->port_b_ifindex,
+				  &port_b_cfg, BPF_ANY);
+	if (ret != 0)
+		return -errno;
+
+	return 0;
+}
+
+/*
+ * Populate the ring_ports DEVMAP_HASH for XDP forwarding.
+ * Maps ifindex -> bpf_devmap_val for bpf_redirect_map().
+ */
+static int populate_ring_ports(int map_fd,
+			       const struct hsr_prp_config *cfg)
+{
+	struct bpf_devmap_val val_a = { .ifindex = cfg->port_a_ifindex };
+	struct bpf_devmap_val val_b = { .ifindex = cfg->port_b_ifindex };
+	int ret;
+
+	ret = bpf_map_update_elem(map_fd, &cfg->port_a_ifindex,
+				  &val_a, BPF_ANY);
+	if (ret != 0)
+		return -errno;
+
+	ret = bpf_map_update_elem(map_fd, &cfg->port_b_ifindex,
+				  &val_b, BPF_ANY);
+	if (ret != 0)
+		return -errno;
+
+	return 0;
+}
+
+/*
+ * Populate the prp_ports map for PRP per-interface dispatch (ISSUE-3).
+ * Marks both ports as PRP ports so node_port_rx dispatches to
+ * NODE_PRP_INGRESS instead of NODE_ETH_INPUT.
+ */
+static int populate_prp_ports(int map_fd,
+			      const struct hsr_prp_config *cfg)
+{
+	uint32_t val = 1;
+	int ret;
+
+	ret = bpf_map_update_elem(map_fd, &cfg->port_a_ifindex,
+				  &val, BPF_ANY);
+	if (ret != 0)
+		return -errno;
+
+	ret = bpf_map_update_elem(map_fd, &cfg->port_b_ifindex,
+				  &val, BPF_ANY);
+	if (ret != 0)
+		return -errno;
+
+	return 0;
+}
+
+/*
+ * Populate ext_dispatch map in node_eth_input to route
+ * EtherType 0x892F to NODE_HSR_INGRESS.
+ */
+int hsr_prp_config_setup_ext_dispatch(int ext_dispatch_fd)
+{
+	uint32_t ethertype = HSR_ETHERTYPE;
+	uint32_t node_id = NODE_HSR_INGRESS;
+
+	if (ext_dispatch_fd < 0)
+		return -EINVAL;
+
+	if (bpf_map_update_elem(ext_dispatch_fd, &ethertype,
+				&node_id, BPF_ANY) != 0)
+		return -errno;
+
+	return 0;
+}
+
+/*
+ * Populate BPF maps for the configured HSR/PRP mode.
+ *
+ * Map FDs are obtained from the xdp-graph-lib graph after loading
+ * the BPF programs:
+ *   tc_ring_config_fd = xgl_graph_get_map_fd(g, "tc_ring_config");
+ *   ring_ports_fd     = xgl_graph_get_map_fd(g, "ring_ports");
+ *   prp_ports_fd      = xgl_graph_get_map_fd(g, "prp_ports");
+ */
+int hsr_prp_config_apply_maps(const struct hsr_prp_config *cfg,
+			      int tc_ring_config_fd,
+			      int ring_ports_fd,
+			      int prp_ports_fd)
 {
 	int ret;
 
@@ -67,15 +181,84 @@ int hsr_prp_config_apply(const struct hsr_prp_config *cfg)
 	if (ret != 0)
 		return ret;
 
-	/*
-	 * Apply configuration to BPF maps:
-	 * - Populate tc_ring_config with peer ifindex and path_id
-	 * - Populate ring_ports DEVMAP for XDP forwarding
-	 * - For PRP mode: populate prp_ports map
-	 *
-	 * Actual map population is done by the graph setup code
-	 * using libbpf map FDs. This function validates only.
-	 */
+	/* TC ring config: both HSR and PRP modes need peer port mapping */
+	if (tc_ring_config_fd >= 0) {
+		ret = populate_tc_ring_config(tc_ring_config_fd, cfg);
+		if (ret != 0)
+			return ret;
+	}
+
+	/* DEVMAP: HSR mode needs ring forwarding */
+	if (cfg->mode == HSR_PRP_MODE_HSR && ring_ports_fd >= 0) {
+		ret = populate_ring_ports(ring_ports_fd, cfg);
+		if (ret != 0)
+			return ret;
+	}
+
+	/* PRP ports: PRP mode needs per-interface dispatch (ISSUE-3) */
+	if (cfg->mode == HSR_PRP_MODE_PRP && prp_ports_fd >= 0) {
+		ret = populate_prp_ports(prp_ports_fd, cfg);
+		if (ret != 0)
+			return ret;
+	}
 
 	return 0;
+}
+
+int hsr_prp_config_apply(const struct hsr_prp_config *cfg)
+{
+	return hsr_prp_config_validate(cfg);
+}
+
+/*
+ * Attach a TC egress BPF program to an interface.
+ *
+ * Uses libbpf tc hook API. The BPF object must be loaded first
+ * and the program FD obtained.
+ */
+int hsr_prp_config_attach_tc(const char *ifname, int prog_fd)
+{
+	unsigned int ifindex;
+
+	if (!ifname || prog_fd < 0)
+		return -EINVAL;
+
+	ifindex = if_nametoindex(ifname);
+	if (ifindex == 0)
+		return -ENODEV;
+
+	LIBBPF_OPTS(bpf_tc_hook, hook,
+		    .ifindex = (int)ifindex,
+		    .attach_point = BPF_TC_EGRESS);
+
+	/* Create clsact qdisc (ignore EEXIST) */
+	int ret = bpf_tc_hook_create(&hook);
+	if (ret != 0 && ret != -EEXIST)
+		return ret;
+
+	LIBBPF_OPTS(bpf_tc_opts, opts,
+		    .prog_fd = prog_fd);
+
+	return bpf_tc_attach(&hook, &opts);
+}
+
+/*
+ * Detach TC egress BPF program from an interface.
+ */
+int hsr_prp_config_detach_tc(const char *ifname)
+{
+	unsigned int ifindex;
+
+	if (!ifname)
+		return -EINVAL;
+
+	ifindex = if_nametoindex(ifname);
+	if (ifindex == 0)
+		return -ENODEV;
+
+	LIBBPF_OPTS(bpf_tc_hook, hook,
+		    .ifindex = (int)ifindex,
+		    .attach_point = BPF_TC_EGRESS);
+
+	return bpf_tc_hook_destroy(&hook);
 }

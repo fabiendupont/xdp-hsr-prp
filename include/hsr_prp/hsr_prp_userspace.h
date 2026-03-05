@@ -42,6 +42,27 @@ int hsr_prp_config_validate(const struct hsr_prp_config *cfg);
 int hsr_prp_config_apply(const struct hsr_prp_config *cfg);
 
 /*
+ * Map population — call after loading BPF programs.
+ * FDs obtained via xgl_graph_get_map_fd() or bpf_obj_get().
+ */
+int hsr_prp_config_apply_maps(const struct hsr_prp_config *cfg,
+			      int tc_ring_config_fd,
+			      int ring_ports_fd,
+			      int prp_ports_fd);
+
+/*
+ * ext_dispatch setup — registers EtherType 0x892F -> NODE_HSR_INGRESS
+ * in the groutx node_eth_input ext_dispatch map.
+ */
+int hsr_prp_config_setup_ext_dispatch(int ext_dispatch_fd);
+
+/*
+ * TC egress attachment — attach/detach TC BPF programs on ring ports.
+ */
+int hsr_prp_config_attach_tc(const char *ifname, int prog_fd);
+int hsr_prp_config_detach_tc(const char *ifname);
+
+/*
  * Node table API.
  */
 struct hsr_prp_nodetable;

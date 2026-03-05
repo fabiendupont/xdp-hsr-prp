@@ -8,12 +8,20 @@
  *
  * Uses DEVMAP_HASH (ring_ports) for bpf_redirect_map().
  *
- * Design note (ISSUE-8): XDP can return only ONE action.
- * This node handles forwarding only (XDP_REDIRECT).
- * Local delivery is handled separately by node_hsr_ingress
- * which strips the tag and passes to node_eth_input.
- * The dispatcher calls ingress first, then forward for frames
- * that need both operations.
+ * Design limitation (ISSUE-8): XDP can return only ONE action.
+ * A frame destined for the local node AND requiring forwarding
+ * cannot be handled in a single XDP program. The chosen approach:
+ *
+ *   - node_hsr_ingress handles local delivery: strips tag, delivers
+ *     to upper layers via XDP_PASS (after re-entering node_eth_input).
+ *   - node_hsr_forward handles ring forwarding: redirects the
+ *     still-tagged frame to the peer port via XDP_REDIRECT.
+ *
+ * For frames that need BOTH actions (local + forward), the current
+ * design delivers locally only. Forwarding of frames destined for
+ * this node is NOT performed — this matches the "consume at
+ * destination" behavior of IEC 62439-3. Intermediate nodes that
+ * only forward (not the destination) use this node exclusively.
  */
 
 #ifndef __BPF__

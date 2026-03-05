@@ -1,0 +1,7 @@
+[wrap-git]
+url = https://github.com/smgglrs/xdp-graph-lib.git
+revision = main
+depth = 1
+
+[provide]
+xdp-graph-lib = xgl_dep

@@ -1,0 +1,7 @@
+[wrap-git]
+url = https://github.com/smgglrs/ebpf-graph-lib.git
+revision = main
+depth = 1
+
+[provide]
+ebpf-graph-lib = egl_dep
