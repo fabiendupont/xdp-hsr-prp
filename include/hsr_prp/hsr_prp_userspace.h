@@ -100,6 +100,19 @@ int hsr_prp_supervision_start(struct hsr_prp_supervision *sup);
 void hsr_prp_supervision_stop(struct hsr_prp_supervision *sup);
 
 /*
+ * Supervision frame reception — parses incoming supervision frames
+ * and updates the node table with discovered peers.
+ */
+struct hsr_prp_sup_rx;
+
+struct hsr_prp_sup_rx *hsr_prp_sup_rx_create(
+	const struct hsr_prp_config *cfg,
+	struct hsr_prp_nodetable *nodetable);
+void hsr_prp_sup_rx_destroy(struct hsr_prp_sup_rx *rx);
+int hsr_prp_sup_rx_start(struct hsr_prp_sup_rx *rx);
+void hsr_prp_sup_rx_stop(struct hsr_prp_sup_rx *rx);
+
+/*
  * Statistics API.
  */
 struct hsr_prp_stats {
@@ -119,5 +132,26 @@ int hsr_prp_stats_dump(int stats_map_fd,
 				  const struct hsr_prp_stats *stats,
 				  void *arg),
 		       void *arg);
+
+/*
+ * Instance API — end-to-end HSR/PRP setup.
+ *
+ * Creates the XDP graph, loads BPF programs (XDP ingress + TC egress)
+ * with pinned map sharing, populates maps, and manages supervision
+ * and node table subsystems.
+ */
+struct hsr_prp_instance;
+
+struct hsr_prp_instance *hsr_prp_instance_create(
+	const struct hsr_prp_config *cfg,
+	const char *bpf_obj_dir);
+int hsr_prp_instance_attach(struct hsr_prp_instance *inst);
+int hsr_prp_instance_start(struct hsr_prp_instance *inst);
+void hsr_prp_instance_stop(struct hsr_prp_instance *inst);
+struct hsr_prp_nodetable *hsr_prp_instance_get_nodetable(
+	struct hsr_prp_instance *inst);
+int hsr_prp_instance_get_stats(struct hsr_prp_instance *inst,
+			       int node_id, struct hsr_prp_stats *out);
+void hsr_prp_instance_destroy(struct hsr_prp_instance *inst);
 
 #endif /* HSR_PRP_USERSPACE_H */

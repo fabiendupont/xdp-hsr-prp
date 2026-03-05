@@ -81,6 +81,8 @@ hsr_prp_lib = static_library('hsr_prp',
     'src/userspace/hsr_prp_nodetable.c',
     'src/userspace/hsr_prp_supervision.c',
     'src/userspace/hsr_prp_stats.c',
+    'src/userspace/hsr_prp_instance.c',
+    'src/userspace/hsr_prp_sup_rx.c',
     include_directories: inc,
     dependencies: [xgl_dep, libbpf_dep, libelf_dep, thread_dep],
     c_args: extra_c_args)
