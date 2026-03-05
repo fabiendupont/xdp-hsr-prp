@@ -138,6 +138,25 @@ if cbmc.found()
         timeout: 300)
 endif
 
+# --- Frama-C deductive verification ---
+
+framac = find_program('frama-c', required: false)
+framac_dir = meson.current_source_dir() / 'verification' / 'framac'
+
+if framac.found()
+    test('framac_seq_after', framac,
+        args: ['-wp', '-wp-rte',
+               framac_dir / 'seq_after_spec.c'],
+        suite: 'framac',
+        timeout: 120)
+
+    test('framac_hsr_tag', framac,
+        args: ['-wp', '-wp-rte',
+               framac_dir / 'hsr_tag_spec.c'],
+        suite: 'framac',
+        timeout: 120)
+endif
+
 # --- TLA+ verification ---
 
 tlc = find_program('tlc', required: false)

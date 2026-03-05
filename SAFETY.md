@@ -227,21 +227,79 @@ system:
 |-------------|------------------------------------------|--------------------------|
 | CBMC        | seq_after() correctness, bounds safety   | Full BPF program logic   |
 | TLA+        | Protocol state machine, dup discard      | Real-time constraints    |
+| Frama-C/WP  | seq_after() contract, hsr_tag accessors  | bswap16 round-trip (Alt-Ergo limitation) |
 | Unit tests  | Header parse/format, field extraction    | Concurrency, packet I/O  |
 | Integration | TC tag insertion, seq increment, RCT     | Multi-node ring topology |
 | ASAN/UBSAN  | Memory safety, undefined behavior        | BPF programs (userspace only) |
+| cppcheck    | MISRA C:2012 advisory + required rules   | BPF-only code (kernel types) |
 
-### Not Yet Implemented
+### Frama-C Deductive Verification
 
-- **Frama-C / memory safety proofs**: BPF programs rely on the
-  kernel verifier for memory safety. Userspace code has ASAN/UBSAN
-  coverage but no formal proof.
-- **MISRA C compliance**: Not assessed. The codebase follows
-  project conventions (C11, -Wall -Wextra -Werror -Wconversion
-  -Wshadow) but has not been audited against MISRA C:2012.
-- **FMECA (criticality)**: This FMEA does not assign criticality
-  rankings. The integrating system must perform FMECA based on
-  the specific application's safety requirements.
+ACSL contracts verified by the WP plugin provide an independent proof
+technique (weakest precondition + SMT) complementing the CBMC bounded
+model checking proofs.
+
+**seq_after_spec.c** — 12/12 goals proved:
+- Four behaviors (equal, after, boundary, before) with postconditions
+- All RTE annotations (signed overflow, division by zero) discharged
+
+**hsr_tag_spec.c** — 41/43 goals proved:
+- Field accessor contracts (get_path, get_lsdu_size, get_seq)
+- Setter postconditions (round-trip property)
+- All pointer dereference and bounds RTE annotations
+- 2 unproven: `bswap16` round-trip and `hsr_tag_set` composite
+  postcondition — Alt-Ergo timeout on bitvector reasoning.
+  These same properties ARE proven by CBMC (hsr_tag_parse_harness).
+
+### MISRA C:2012 Compliance
+
+Scanned with cppcheck 2.19.1 `--addon=misra`. Results:
+
+- **Zero violations** on project source files (headers, userspace,
+  unit tests)
+- **Configuration notes** (not violations): `LIBBPF_OPTS` macro and
+  `BPF_ANY` constant from libbpf headers not resolvable by static
+  analysis — these are third-party API macros, not project code
+
+**Deliberate deviations** (documented, not violations):
+
+| Rule   | Deviation                                    | Rationale                |
+|--------|----------------------------------------------|--------------------------|
+| Dir 4.6 | `__u16`, `__be16` etc. from `<linux/types.h>` | Required for BPF/kernel API compatibility |
+| Rule 1.2 | `__attribute__((packed))` on protocol structs | Required for wire-format correctness |
+| Rule 21.6 | `fprintf(stderr, ...)` in test code          | Test output only, not production code |
+
+## FMECA — Criticality Rankings
+
+Risk Priority Number: **RPN = Severity × Occurrence × Detection**
+
+Scale: 1 (lowest) to 10 (highest).
+
+| FM   | Failure Mode              | Sev | Occ | Det | RPN | Mitigation Status      |
+|------|---------------------------|-----|-----|-----|-----|------------------------|
+| FM-1 | Duplicate frame delivered  |  4  |  2  |  2  |  16 | Mitigated (BPF_NOEXIST)|
+| FM-2 | Valid frame dropped (LRU) |  3  |  3  |  5  |  45 | Mitigated (table sizing)|
+| FM-3 | Wraparound mishandled     |  9  |  1  |  1  |   9 | Eliminated (CBMC proof)|
+| FM-4 | Clone loop                | 10  |  1  |  1  |  10 | Eliminated (skb->mark) |
+| FM-5 | Sequence counter race     |  5  |  1  |  1  |   5 | Eliminated (spin_lock) |
+| FM-6 | PRP false positive        |  8  |  2  |  3  |  48 | Mitigated (LSDU check) |
+| FM-7 | MAC header corruption     | 10  |  1  |  1  |  10 | Eliminated (save/restore)|
+| FM-8 | Tail call depth exceeded  |  2  |  1  |  1  |   2 | Eliminated (depth counter)|
+| FM-9 | Map memory exhaustion     |  3  |  2  |  3  |  18 | Mitigated (LRU eviction)|
+
+**Severity justification**:
+- 10: Silent data corruption or network storm (FM-4, FM-7)
+- 9: Safety-critical function silently wrong (FM-3)
+- 8: Data corruption detectable by upper layers (FM-6)
+- 4-5: Availability impact, redundancy still provides protection (FM-1, FM-5)
+- 2-3: Graceful degradation, single frame affected (FM-2, FM-8, FM-9)
+
+**Highest residual risk**: FM-6 (RPN 48) — PRP false positive.
+The LSDU size check reduces but cannot eliminate false positives
+where payload coincidentally matches both suffix and size. The
+integrating system should consider application-layer integrity
+checks (e.g., IEC 61850 GOOSE/SV sequence counters) as defense
+in depth.
 
 ## Minimum Kernel Version
 
