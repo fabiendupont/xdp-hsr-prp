@@ -32,7 +32,6 @@
 #include <hsr_prp/hsr_tag.h>
 #include <hsr_prp/prp_rct.h>
 #include <hsr_prp/hsr_prp_common.h>
-#include <hsr_prp/hsr_prp_node_ids.h>
 #include <hsr_prp/hsr_prp_userspace.h>
 
 static int tests_run;
@@ -746,7 +745,7 @@ static void test_ext_dispatch_setup(void)
 	TEST("ext_dispatch_setup");
 
 	/* This tests the userspace API without BPF */
-	int ret = hsr_prp_config_setup_ext_dispatch(-1);
+	int ret = hsr_prp_config_setup_ext_dispatch(-1, 20);
 	if (ret != -EINVAL)
 		FAIL("should reject invalid fd");
 

@@ -61,8 +61,8 @@ struct {
 
 /*
  * PRP ports map (ISSUE-3).
- * Interfaces that are PRP ports get dispatched to NODE_PRP_INGRESS
- * instead of NODE_ETH_INPUT by node_port_rx.
+ * Interfaces that are PRP ports get dispatched to the PRP ingress node
+ * instead of eth_input by node_port_rx.
  * Key: ifindex, Value: 1 if PRP port.
  */
 struct {
@@ -99,6 +99,19 @@ struct {
 	__type(key, __u32);
 	__type(value, __u8[ETH_ALEN]);
 } local_mac SEC(".maps");
+
+/*
+ * Node index indirection table.
+ * Maps role IDs (HSR_PRP_ROLE_*) to actual PROG_ARRAY indices,
+ * populated by userspace at registration time.
+ * Avoids hardcoded indices that collide with other graph extensions.
+ */
+struct {
+	__uint(type, BPF_MAP_TYPE_ARRAY);
+	__uint(max_entries, HSR_PRP_NODE_CONFIG_SIZE);
+	__type(key, __u32);
+	__type(value, __u32);
+} hsr_prp_node_config SEC(".maps");
 
 /*
  * Per-node statistics using ebpf-graph-lib stats infrastructure.

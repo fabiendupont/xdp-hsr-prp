@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 
 /*
- * node_prp_ingress — PRP ingress processing (XDP, index 16).
+ * node_prp_ingress — PRP ingress processing (XDP).
  *
  * Receives frames from PRP-designated ports (dispatched from
  * node_port_rx via prp_ports map, ISSUE-3).
@@ -11,6 +11,8 @@
  * (0x88FB can appear in legitimate payload).
  * Performs duplicate detection, strips the RCT, and continues
  * to node_eth_input for normal processing.
+ *
+ * Node index is read from hsr_prp_node_config map at runtime.
  */
 
 #ifndef __BPF__
@@ -37,11 +39,21 @@ XGL_NODE(node_prp_ingress)
 	__u32 pkt_len;
 	__u16 seq_nr;
 	__u16 lsdu_size;
+	__u32 role;
+	__u32 *self_idx;
+	__u32 *eth_idx;
 	int ret;
+
+	/* Read our own index from config map for stats */
+	role = HSR_PRP_ROLE_PRP_INGRESS;
+	self_idx = bpf_map_lookup_elem(&hsr_prp_node_config, &role);
+	if (!self_idx) {
+		XGL_DROP();
+	}
 
 	meta = XGL_META_GET(ctx);
 	if (!meta) {
-		XGL_STATS_INC_ERROR(hsr_prp_stats, NODE_PRP_INGRESS);
+		XGL_STATS_INC_ERROR(hsr_prp_stats, *self_idx);
 		XGL_DROP();
 	}
 
@@ -53,18 +65,18 @@ XGL_NODE(node_prp_ingress)
 	pkt_len = (__u32)(data_end - data);
 	if (pkt_len < sizeof(struct ethhdr) + PRP_RCT_SIZE) {
 		/* Too short for PRP — pass through as normal frame */
-		XGL_STATS_INC_RX(hsr_prp_stats, NODE_PRP_INGRESS, pkt_len);
+		XGL_STATS_INC_RX(hsr_prp_stats, *self_idx, pkt_len);
 		goto pass_through;
 	}
 
-	XGL_STATS_INC_RX(hsr_prp_stats, NODE_PRP_INGRESS, pkt_len);
+	XGL_STATS_INC_RX(hsr_prp_stats, *self_idx, pkt_len);
 
 	/* RCT is at the end of the frame, last 6 bytes */
 	rct = (struct prp_rct *)(data_end - PRP_RCT_SIZE);
 
 	/* Bounds check for verifier */
 	if ((void *)rct < data || (void *)(rct + 1) > data_end) {
-		XGL_STATS_INC_ERROR(hsr_prp_stats, NODE_PRP_INGRESS);
+		XGL_STATS_INC_ERROR(hsr_prp_stats, *self_idx);
 		XGL_DROP();
 	}
 
@@ -94,7 +106,7 @@ XGL_NODE(node_prp_ingress)
 
 	/* Bounds check for source MAC access */
 	if ((void *)(eth + 1) > data_end) {
-		XGL_STATS_INC_ERROR(hsr_prp_stats, NODE_PRP_INGRESS);
+		XGL_STATS_INC_ERROR(hsr_prp_stats, *self_idx);
 		XGL_DROP();
 	}
 
@@ -104,7 +116,7 @@ XGL_NODE(node_prp_ingress)
 
 	/* Check for duplicate */
 	if (bpf_map_lookup_elem(&dup_table, &dkey)) {
-		XGL_STATS_INC_DROP(hsr_prp_stats, NODE_PRP_INGRESS);
+		XGL_STATS_INC_DROP(hsr_prp_stats, *self_idx);
 		XGL_DROP();
 	}
 
@@ -115,17 +127,17 @@ XGL_NODE(node_prp_ingress)
 
 	ret = bpf_map_update_elem(&dup_table, &dkey, &dval, BPF_NOEXIST);
 	if (ret != 0 && ret != -17) {
-		XGL_STATS_INC_ERROR(hsr_prp_stats, NODE_PRP_INGRESS);
+		XGL_STATS_INC_ERROR(hsr_prp_stats, *self_idx);
 		XGL_DROP();
 	}
 	if (ret == -17) {
-		XGL_STATS_INC_DROP(hsr_prp_stats, NODE_PRP_INGRESS);
+		XGL_STATS_INC_DROP(hsr_prp_stats, *self_idx);
 		XGL_DROP();
 	}
 
 	/* Strip RCT by shrinking the tail by 6 bytes */
 	if (bpf_xdp_adjust_tail(ctx, -(int)PRP_RCT_SIZE) != 0) {
-		XGL_STATS_INC_ERROR(hsr_prp_stats, NODE_PRP_INGRESS);
+		XGL_STATS_INC_ERROR(hsr_prp_stats, *self_idx);
 		XGL_DROP();
 	}
 
@@ -136,14 +148,14 @@ XGL_NODE(node_prp_ingress)
 	/* Update metadata */
 	meta = XGL_META_GET(ctx);
 	if (!meta) {
-		XGL_STATS_INC_ERROR(hsr_prp_stats, NODE_PRP_INGRESS);
+		XGL_STATS_INC_ERROR(hsr_prp_stats, *self_idx);
 		XGL_DROP();
 	}
 
 pass_through:
 	/* Check depth before re-entering the graph */
 	if (EGL_DEPTH_EXCEEDED(hsr_prp_depth, HSR_PRP_MAX_DEPTH)) {
-		XGL_STATS_INC_DROP(hsr_prp_stats, NODE_PRP_INGRESS);
+		XGL_STATS_INC_DROP(hsr_prp_stats, *self_idx);
 		XGL_DROP();
 	}
 
@@ -151,11 +163,14 @@ pass_through:
 	data = (void *)(long)ctx->data;
 	pkt_len = (__u32)(data_end - data);
 
-	XGL_STATS_INC_TX(hsr_prp_stats, NODE_PRP_INGRESS, pkt_len);
+	XGL_STATS_INC_TX(hsr_prp_stats, *self_idx, pkt_len);
 
-	/* Continue to node_eth_input for normal processing */
-	XGL_NEXT(ctx, egl_prog_array, NODE_ETH_INPUT);
+	/* Read eth_input index from config map */
+	role = HSR_PRP_ROLE_ETH_INPUT;
+	eth_idx = bpf_map_lookup_elem(&hsr_prp_node_config, &role);
+	if (eth_idx)
+		XGL_NEXT(ctx, egl_prog_array, *eth_idx);
 
-	XGL_STATS_INC_ERROR(hsr_prp_stats, NODE_PRP_INGRESS);
+	XGL_STATS_INC_ERROR(hsr_prp_stats, *self_idx);
 	XGL_PASS();
 }

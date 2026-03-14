@@ -4,7 +4,6 @@
 
 #include <hsr_prp/hsr_prp_userspace.h>
 #include <hsr_prp/hsr_prp_common.h>
-#include <hsr_prp/hsr_prp_node_ids.h>
 
 #include <string.h>
 #include <errno.h>
@@ -121,7 +120,7 @@ static int populate_ring_ports(int map_fd,
 /*
  * Populate the prp_ports map for PRP per-interface dispatch (ISSUE-3).
  * Marks both ports as PRP ports so node_port_rx dispatches to
- * NODE_PRP_INGRESS instead of NODE_ETH_INPUT.
+ * the PRP ingress node instead of eth_input.
  */
 static int populate_prp_ports(int map_fd,
 			      const struct hsr_prp_config *cfg)
@@ -144,18 +143,18 @@ static int populate_prp_ports(int map_fd,
 
 /*
  * Populate ext_dispatch map in node_eth_input to route
- * EtherType 0x892F to NODE_HSR_INGRESS.
+ * EtherType 0x892F to the HSR ingress node at the given index.
  */
-int hsr_prp_config_setup_ext_dispatch(int ext_dispatch_fd)
+int hsr_prp_config_setup_ext_dispatch(int ext_dispatch_fd,
+				      uint32_t hsr_ingress_idx)
 {
 	uint32_t ethertype = HSR_ETHERTYPE;
-	uint32_t node_id = NODE_HSR_INGRESS;
 
 	if (ext_dispatch_fd < 0)
 		return -EINVAL;
 
 	if (bpf_map_update_elem(ext_dispatch_fd, &ethertype,
-				&node_id, BPF_ANY) != 0)
+				&hsr_ingress_idx, BPF_ANY) != 0)
 		return -errno;
 
 	return 0;

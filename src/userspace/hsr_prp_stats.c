@@ -1,7 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 
 #include <hsr_prp/hsr_prp_userspace.h>
-#include <hsr_prp/hsr_prp_node_ids.h>
 
 #include <stdlib.h>
 #include <string.h>
@@ -98,18 +97,27 @@ int hsr_prp_stats_dump(int stats_map_fd,
 		       void *arg)
 {
 	struct hsr_prp_stats out;
-	int node_ids[] = { NODE_HSR_INGRESS, NODE_HSR_FORWARD,
-			   NODE_PRP_INGRESS };
 	int count = 0;
+	uint32_t key = 0;
+	uint32_t next_key;
 
 	if (stats_map_fd < 0 || !cb)
 		return -EINVAL;
 
-	for (int i = 0; i < 3; i++) {
-		if (hsr_prp_stats_read(stats_map_fd, node_ids[i], &out) == 0) {
-			cb(node_ids[i], &out, arg);
-			count++;
+	/*
+	 * Iterate over all entries in the PERCPU_ARRAY stats map.
+	 * Only report entries with non-zero stats (active nodes).
+	 */
+	while (bpf_map_get_next_key(stats_map_fd, &key, &next_key) == 0) {
+		if (hsr_prp_stats_read(stats_map_fd, (int)next_key,
+				       &out) == 0) {
+			if (out.rx_count || out.tx_count ||
+			    out.dup_drops || out.errors) {
+				cb((int)next_key, &out, arg);
+				count++;
+			}
 		}
+		key = next_key;
 	}
 
 	return count;

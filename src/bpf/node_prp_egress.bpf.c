@@ -24,7 +24,6 @@
 
 #include <hsr_prp/prp_rct.h>
 #include <hsr_prp/hsr_prp_common.h>
-#include <hsr_prp/hsr_prp_node_ids.h>
 
 #include <egl/bpf/egl_common.bpf.h>
 

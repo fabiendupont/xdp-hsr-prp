@@ -47,15 +47,16 @@ static int create_rx_socket(uint32_t ifindex)
 	struct sockaddr_ll addr;
 	struct timeval tv;
 	int sock;
+	uint16_t proto = (uint16_t)HSR_SUP_ETHERTYPE;
 
-	sock = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
+	sock = socket(AF_PACKET, SOCK_RAW, htons(proto));
 	if (sock < 0)
 		return -errno;
 
 	memset(&addr, 0, sizeof(addr));
 	addr.sll_family = AF_PACKET;
 	addr.sll_ifindex = (int)ifindex;
-	addr.sll_protocol = htons(ETH_P_ALL);
+	addr.sll_protocol = htons(proto);
 
 	if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
 		int err = errno;

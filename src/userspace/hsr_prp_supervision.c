@@ -87,6 +87,8 @@ static int send_supervision_frame(struct hsr_prp_supervision *sup, int sock,
 		payload->tlv1.type = HSR_TLV_TYPE_DANP;
 		payload->tlv1.length = HSR_TLV_LEN_MAC;
 		memcpy(payload->mac_danp, sup->local_mac, ETH_ALEN);
+		payload->tlv0.type = HSR_TLV_TYPE_END;
+		payload->tlv0.length = 0x00;
 
 		frame_len = sizeof(struct ethhdr) +
 			    sizeof(struct hsr_sup_payload);
@@ -102,6 +104,8 @@ static int send_supervision_frame(struct hsr_prp_supervision *sup, int sock,
 		payload->tlv1.type = HSR_TLV_TYPE_DANP;
 		payload->tlv1.length = HSR_TLV_LEN_MAC;
 		memcpy(payload->mac_danp, sup->local_mac, ETH_ALEN);
+		payload->tlv0.type = HSR_TLV_TYPE_END;
+		payload->tlv0.length = 0x00;
 
 		frame_len = sizeof(struct ethhdr) +
 			    sizeof(struct hsr_sup_payload);

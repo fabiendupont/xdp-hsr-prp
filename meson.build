@@ -46,11 +46,20 @@ clang = find_program('clang')
 xgl_inc = meson.current_source_dir() / 'subprojects' / 'xdp-graph-lib' / 'include'
 egl_inc = meson.current_source_dir() / 'subprojects' / 'ebpf-graph-lib' / 'include'
 
+host_arch = host_machine.cpu_family()
+if host_arch == 'aarch64'
+  bpf_arch_flag = '-D__TARGET_ARCH_arm64'
+elif host_arch == 'x86_64'
+  bpf_arch_flag = '-D__TARGET_ARCH_x86'
+else
+  bpf_arch_flag = '-D__TARGET_ARCH_' + host_arch
+endif
+
 bpf_cflags = [
     '-target', 'bpf',
     '-O2', '-g',
     '-Wall', '-Wextra',
-    '-D__TARGET_ARCH_x86',
+    bpf_arch_flag,
     '-D__BPF__',
     '-I' + meson.current_source_dir() / 'include',
     '-I' + meson.current_source_dir() / 'src' / 'bpf',

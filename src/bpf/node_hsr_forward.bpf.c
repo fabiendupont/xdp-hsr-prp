@@ -1,12 +1,14 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 
 /*
- * node_hsr_forward — HSR ring forwarding (XDP, index 15).
+ * node_hsr_forward — HSR ring forwarding (XDP).
  *
  * Forwards HSR-tagged frames to the peer ring port.
  * Received on port A → forward to port B, and vice versa.
  *
  * Uses DEVMAP_HASH (ring_ports) for bpf_redirect_map().
+ *
+ * Node index is read from hsr_prp_node_config map at runtime.
  *
  * Design limitation (ISSUE-8): XDP can return only ONE action.
  * A frame destined for the local node AND requiring forwarding
@@ -44,10 +46,19 @@ XGL_NODE(node_hsr_forward)
 	__u32 ingress_ifindex;
 	__u32 pkt_len;
 	__u32 peer_ifindex;
+	__u32 role;
+	__u32 *self_idx;
+
+	/* Read our own index from config map for stats */
+	role = HSR_PRP_ROLE_HSR_FORWARD;
+	self_idx = bpf_map_lookup_elem(&hsr_prp_node_config, &role);
+	if (!self_idx) {
+		XGL_DROP();
+	}
 
 	meta = XGL_META_GET(ctx);
 	if (!meta) {
-		XGL_STATS_INC_ERROR(hsr_prp_stats, NODE_HSR_FORWARD);
+		XGL_STATS_INC_ERROR(hsr_prp_stats, *self_idx);
 		XGL_DROP();
 	}
 
@@ -57,12 +68,12 @@ XGL_NODE(node_hsr_forward)
 
 	/* Bounds check: Ethernet header + HSR tag */
 	if ((void *)(eth + 1) + sizeof(struct hsr_tag) > data_end) {
-		XGL_STATS_INC_DROP(hsr_prp_stats, NODE_HSR_FORWARD);
+		XGL_STATS_INC_DROP(hsr_prp_stats, *self_idx);
 		XGL_DROP();
 	}
 
 	pkt_len = (__u32)(data_end - data);
-	XGL_STATS_INC_RX(hsr_prp_stats, NODE_HSR_FORWARD, pkt_len);
+	XGL_STATS_INC_RX(hsr_prp_stats, *self_idx, pkt_len);
 
 	/* Do not forward frames originated by us (prevents ring loops) */
 	{
@@ -75,7 +86,7 @@ XGL_NODE(node_hsr_forward)
 		    our_mac[3] == eth->h_source[3] &&
 		    our_mac[4] == eth->h_source[4] &&
 		    our_mac[5] == eth->h_source[5]) {
-			XGL_STATS_INC_DROP(hsr_prp_stats, NODE_HSR_FORWARD);
+			XGL_STATS_INC_DROP(hsr_prp_stats, *self_idx);
 			XGL_DROP();
 		}
 	}
@@ -86,13 +97,13 @@ XGL_NODE(node_hsr_forward)
 	cfg = bpf_map_lookup_elem(&tc_ring_config, &ingress_ifindex);
 	if (!cfg) {
 		/* Unknown ingress port — drop */
-		XGL_STATS_INC_DROP(hsr_prp_stats, NODE_HSR_FORWARD);
+		XGL_STATS_INC_DROP(hsr_prp_stats, *self_idx);
 		XGL_DROP();
 	}
 
 	peer_ifindex = cfg->peer_ifindex;
 
-	XGL_STATS_INC_TX(hsr_prp_stats, NODE_HSR_FORWARD, pkt_len);
+	XGL_STATS_INC_TX(hsr_prp_stats, *self_idx, pkt_len);
 
 	/* Forward to peer ring port via DEVMAP */
 	return XGL_REDIRECT_MAP(ring_ports, peer_ifindex, 0);

@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 
 /*
- * node_hsr_ingress — HSR ingress processing (XDP, index 14).
+ * node_hsr_ingress — HSR ingress processing (XDP).
  *
  * Receives frames with EtherType 0x892F dispatched from node_eth_input
  * via ext_dispatch. Parses the HSR tag, performs duplicate detection,
@@ -9,6 +9,9 @@
  *
  * Tag stripping saves and restores the 12-byte MAC header to avoid
  * corruption (same pattern as groutx VLAN strip, ISSUE-7).
+ *
+ * Node index is read from hsr_prp_node_config map at runtime to avoid
+ * hardcoded PROG_ARRAY index collisions.
  */
 
 #ifndef __BPF__
@@ -35,11 +38,21 @@ XGL_NODE(node_hsr_ingress)
 	__u16 seq_nr;
 	__u8 saved_dst[ETH_ALEN];
 	__u8 saved_src[ETH_ALEN];
+	__u32 role;
+	__u32 *self_idx;
+	__u32 *eth_idx;
 	int ret;
+
+	/* Read our own index from config map for stats */
+	role = HSR_PRP_ROLE_HSR_INGRESS;
+	self_idx = bpf_map_lookup_elem(&hsr_prp_node_config, &role);
+	if (!self_idx) {
+		XGL_DROP();
+	}
 
 	meta = XGL_META_GET(ctx);
 	if (!meta) {
-		XGL_STATS_INC_ERROR(hsr_prp_stats, NODE_HSR_INGRESS);
+		XGL_STATS_INC_ERROR(hsr_prp_stats, *self_idx);
 		XGL_DROP();
 	}
 
@@ -49,12 +62,12 @@ XGL_NODE(node_hsr_ingress)
 
 	/* Bounds check: Ethernet header + HSR tag */
 	if ((void *)(eth + 1) + sizeof(struct hsr_tag) > data_end) {
-		XGL_STATS_INC_DROP(hsr_prp_stats, NODE_HSR_INGRESS);
+		XGL_STATS_INC_DROP(hsr_prp_stats, *self_idx);
 		XGL_DROP();
 	}
 
 	pkt_len = (__u32)(data_end - data);
-	XGL_STATS_INC_RX(hsr_prp_stats, NODE_HSR_INGRESS, pkt_len);
+	XGL_STATS_INC_RX(hsr_prp_stats, *self_idx, pkt_len);
 
 	tag = (struct hsr_tag *)((void *)(eth + 1));
 
@@ -65,7 +78,7 @@ XGL_NODE(node_hsr_ingress)
 	__u16 expected = (__u16)(pkt_len - sizeof(struct ethhdr));
 
 	if (lsdu_size != expected) {
-		XGL_STATS_INC_DROP(hsr_prp_stats, NODE_HSR_INGRESS);
+		XGL_STATS_INC_DROP(hsr_prp_stats, *self_idx);
 		XGL_DROP();
 	}
 
@@ -79,7 +92,7 @@ XGL_NODE(node_hsr_ingress)
 	/* Check for duplicate */
 	if (bpf_map_lookup_elem(&dup_table, &dkey)) {
 		/* Duplicate frame — drop */
-		XGL_STATS_INC_DROP(hsr_prp_stats, NODE_HSR_INGRESS);
+		XGL_STATS_INC_DROP(hsr_prp_stats, *self_idx);
 		XGL_DROP();
 	}
 
@@ -93,12 +106,12 @@ XGL_NODE(node_hsr_ingress)
 	ret = bpf_map_update_elem(&dup_table, &dkey, &dval, BPF_NOEXIST);
 	if (ret != 0 && ret != -17 /* EEXIST */) {
 		/* Map full or error — drop conservatively */
-		XGL_STATS_INC_ERROR(hsr_prp_stats, NODE_HSR_INGRESS);
+		XGL_STATS_INC_ERROR(hsr_prp_stats, *self_idx);
 		XGL_DROP();
 	}
 	if (ret == -17) {
 		/* Another CPU inserted first — this is a duplicate */
-		XGL_STATS_INC_DROP(hsr_prp_stats, NODE_HSR_INGRESS);
+		XGL_STATS_INC_DROP(hsr_prp_stats, *self_idx);
 		XGL_DROP();
 	}
 
@@ -117,7 +130,7 @@ XGL_NODE(node_hsr_ingress)
 
 	/* Shift head forward by HSR_TAG_SIZE (6 bytes), removing the tag */
 	if (bpf_xdp_adjust_head(ctx, HSR_TAG_SIZE) != 0) {
-		XGL_STATS_INC_ERROR(hsr_prp_stats, NODE_HSR_INGRESS);
+		XGL_STATS_INC_ERROR(hsr_prp_stats, *self_idx);
 		XGL_DROP();
 	}
 
@@ -127,7 +140,7 @@ XGL_NODE(node_hsr_ingress)
 	eth = data;
 
 	if ((void *)(eth + 1) > data_end) {
-		XGL_STATS_INC_ERROR(hsr_prp_stats, NODE_HSR_INGRESS);
+		XGL_STATS_INC_ERROR(hsr_prp_stats, *self_idx);
 		XGL_DROP();
 	}
 
@@ -139,7 +152,7 @@ XGL_NODE(node_hsr_ingress)
 	/* Update metadata for inner frame */
 	meta = XGL_META_GET(ctx);
 	if (!meta) {
-		XGL_STATS_INC_ERROR(hsr_prp_stats, NODE_HSR_INGRESS);
+		XGL_STATS_INC_ERROR(hsr_prp_stats, *self_idx);
 		XGL_DROP();
 	}
 
@@ -147,17 +160,20 @@ XGL_NODE(node_hsr_ingress)
 
 	/* Check depth before re-entering the graph */
 	if (EGL_DEPTH_EXCEEDED(hsr_prp_depth, HSR_PRP_MAX_DEPTH)) {
-		XGL_STATS_INC_DROP(hsr_prp_stats, NODE_HSR_INGRESS);
+		XGL_STATS_INC_DROP(hsr_prp_stats, *self_idx);
 		XGL_DROP();
 	}
 
 	pkt_len = (__u32)(data_end - data);
-	XGL_STATS_INC_TX(hsr_prp_stats, NODE_HSR_INGRESS, pkt_len);
+	XGL_STATS_INC_TX(hsr_prp_stats, *self_idx, pkt_len);
 
-	/* Re-enter node_eth_input for normal processing of inner frame */
-	XGL_NEXT(ctx, egl_prog_array, NODE_ETH_INPUT);
+	/* Read eth_input index from config map */
+	role = HSR_PRP_ROLE_ETH_INPUT;
+	eth_idx = bpf_map_lookup_elem(&hsr_prp_node_config, &role);
+	if (eth_idx)
+		XGL_NEXT(ctx, egl_prog_array, *eth_idx);
 
-	/* Tail call failed — pass to kernel stack */
-	XGL_STATS_INC_ERROR(hsr_prp_stats, NODE_HSR_INGRESS);
+	/* Config not populated or tail call failed — pass to kernel stack */
+	XGL_STATS_INC_ERROR(hsr_prp_stats, *self_idx);
 	XGL_PASS();
 }

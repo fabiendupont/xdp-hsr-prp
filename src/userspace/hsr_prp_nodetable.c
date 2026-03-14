@@ -7,6 +7,7 @@
 #include <string.h>
 #include <time.h>
 #include <errno.h>
+#include <pthread.h>
 
 struct hsr_prp_node {
 	uint8_t  mac[ETH_ALEN];
@@ -22,6 +23,7 @@ struct hsr_prp_nodetable {
 	uint32_t capacity;
 	uint32_t count;
 	uint32_t timeout_ms;
+	pthread_mutex_t lock;
 };
 
 static uint64_t now_ns(void)
@@ -52,6 +54,7 @@ struct hsr_prp_nodetable *hsr_prp_nodetable_create(uint32_t capacity,
 
 	nt->capacity = capacity;
 	nt->timeout_ms = timeout_ms;
+	pthread_mutex_init(&nt->lock, NULL);
 
 	return nt;
 }
@@ -61,6 +64,7 @@ void hsr_prp_nodetable_destroy(struct hsr_prp_nodetable *nt)
 	if (!nt)
 		return;
 
+	pthread_mutex_destroy(&nt->lock);
 	free(nt->entries);
 	free(nt);
 }
@@ -118,6 +122,8 @@ int hsr_prp_nodetable_add(struct hsr_prp_nodetable *nt,
 
 	ts = now_ns();
 
+	pthread_mutex_lock(&nt->lock);
+
 	/* Check if node already exists */
 	node = find_node(nt, mac);
 	if (node) {
@@ -126,6 +132,7 @@ int hsr_prp_nodetable_add(struct hsr_prp_nodetable *nt,
 		else
 			node->last_seen_b = ts;
 		node->last_seq = seq_nr;
+		pthread_mutex_unlock(&nt->lock);
 		return 0;
 	}
 
@@ -134,8 +141,10 @@ int hsr_prp_nodetable_add(struct hsr_prp_nodetable *nt,
 	if (!node) {
 		/* Table full — evict oldest */
 		node = find_oldest(nt);
-		if (!node)
+		if (!node) {
+			pthread_mutex_unlock(&nt->lock);
 			return -ENOMEM;
+		}
 		nt->count--;
 	}
 
@@ -152,6 +161,7 @@ int hsr_prp_nodetable_add(struct hsr_prp_nodetable *nt,
 	}
 
 	nt->count++;
+	pthread_mutex_unlock(&nt->lock);
 	return 0;
 }
 
@@ -163,22 +173,32 @@ int hsr_prp_nodetable_remove(struct hsr_prp_nodetable *nt,
 	if (!nt || !mac)
 		return -EINVAL;
 
+	pthread_mutex_lock(&nt->lock);
+
 	node = find_node(nt, mac);
-	if (!node)
+	if (!node) {
+		pthread_mutex_unlock(&nt->lock);
 		return -ENOENT;
+	}
 
 	node->valid = 0;
 	nt->count--;
+	pthread_mutex_unlock(&nt->lock);
 	return 0;
 }
 
 bool hsr_prp_nodetable_lookup(const struct hsr_prp_nodetable *nt,
 			      const uint8_t *mac)
 {
+	bool found;
+
 	if (!nt || !mac)
 		return false;
 
-	return find_node(nt, mac) != NULL;
+	pthread_mutex_lock((pthread_mutex_t *)&nt->lock);
+	found = find_node(nt, mac) != NULL;
+	pthread_mutex_unlock((pthread_mutex_t *)&nt->lock);
+	return found;
 }
 
 int hsr_prp_nodetable_timeout_scan(struct hsr_prp_nodetable *nt)
@@ -192,6 +212,8 @@ int hsr_prp_nodetable_timeout_scan(struct hsr_prp_nodetable *nt)
 
 	ts = now_ns();
 	timeout_ns = (uint64_t)nt->timeout_ms * 1000000ULL;
+
+	pthread_mutex_lock(&nt->lock);
 
 	for (uint32_t i = 0; i < nt->capacity; i++) {
 		if (!nt->entries[i].valid)
@@ -208,6 +230,7 @@ int hsr_prp_nodetable_timeout_scan(struct hsr_prp_nodetable *nt)
 		}
 	}
 
+	pthread_mutex_unlock(&nt->lock);
 	return removed;
 }
 
@@ -222,6 +245,8 @@ int hsr_prp_nodetable_dump(const struct hsr_prp_nodetable *nt,
 	if (!nt || !cb)
 		return -EINVAL;
 
+	pthread_mutex_lock((pthread_mutex_t *)&nt->lock);
+
 	for (uint32_t i = 0; i < nt->capacity; i++) {
 		if (!nt->entries[i].valid)
 			continue;
@@ -234,5 +259,6 @@ int hsr_prp_nodetable_dump(const struct hsr_prp_nodetable *nt,
 		count++;
 	}
 
+	pthread_mutex_unlock((pthread_mutex_t *)&nt->lock);
 	return count;
 }

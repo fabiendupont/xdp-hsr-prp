@@ -4,19 +4,23 @@
 #define HSR_PRP_NODE_IDS_H
 
 /*
- * Extension node indices in the groutx XDP graph.
- * Indices 11-13 are used by groutx core (NODE_BRIDGE_INPUT, etc.).
- * Indices 14-29 are available for extension nodes.
+ * Dynamic node index allocation roles.
  *
- * These are XDP graph nodes only. HSR/PRP egress are TC programs
- * attached separately and do not occupy graph indices.
+ * BPF programs read their own index and tail-call targets from the
+ * hsr_prp_node_config map at runtime. This avoids hardcoded PROG_ARRAY
+ * indices that collide with other graph extensions (e.g. groutx K8s
+ * nodes NODE_SNAT=14, NODE_NDP=15).
+ *
+ * Userspace allocates indices dynamically and populates the config map.
  */
-#define NODE_HSR_INGRESS     14
-#define NODE_HSR_FORWARD     15
-#define NODE_PRP_INGRESS     16
+#define HSR_PRP_ROLE_ETH_INPUT     0  /* tail-call target: eth_input */
+#define HSR_PRP_ROLE_HSR_INGRESS   1  /* self index: node_hsr_ingress */
+#define HSR_PRP_ROLE_HSR_FORWARD   2  /* self index: node_hsr_forward */
+#define HSR_PRP_ROLE_PRP_INGRESS   3  /* self index: node_prp_ingress */
+#define HSR_PRP_NODE_CONFIG_SIZE   4
 
 /*
- * groutx core node indices (referenced by HSR/PRP nodes).
+ * groutx core node indices (referenced for default config map values).
  */
 #define NODE_PORT_RX          0
 #define NODE_ETH_INPUT        1

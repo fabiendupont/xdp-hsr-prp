@@ -101,6 +101,7 @@ struct ring_port_config {
 /*
  * Supervision TLV types (IEC 62439-3 clause 5.2.3.3).
  */
+#define HSR_TLV_TYPE_END     0x00   /* TLV0 end marker */
 #define HSR_TLV_TYPE_DANP    0x14   /* TLV type for DANP MAC */
 #define HSR_TLV_TYPE_REDBOX  0x1E   /* TLV type for RedBox MAC */
 #define HSR_TLV_LEN_MAC      6     /* MAC address length */
@@ -116,6 +117,7 @@ struct hsr_sup_payload {
 	__be16 seq_nr;          /* supervision sequence number */
 	struct hsr_sup_tlv tlv1;
 	__u8  mac_danp[ETH_ALEN];
+	struct hsr_sup_tlv tlv0; /* TLV0 end marker per IEC 62439-3 5.2.3.3 */
 } __attribute__((packed));
 
 /*

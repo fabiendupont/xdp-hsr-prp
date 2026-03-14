@@ -53,10 +53,11 @@ int hsr_prp_config_apply_maps(const struct hsr_prp_config *cfg,
 			      const uint8_t *mac);
 
 /*
- * ext_dispatch setup — registers EtherType 0x892F -> NODE_HSR_INGRESS
- * in the groutx node_eth_input ext_dispatch map.
+ * ext_dispatch setup — registers EtherType 0x892F to the given
+ * dynamically-allocated HSR ingress node index.
  */
-int hsr_prp_config_setup_ext_dispatch(int ext_dispatch_fd);
+int hsr_prp_config_setup_ext_dispatch(int ext_dispatch_fd,
+				      uint32_t hsr_ingress_idx);
 
 /*
  * TC egress attachment — attach/detach TC BPF programs on ring ports.
