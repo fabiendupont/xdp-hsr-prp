@@ -185,9 +185,6 @@ struct hsr_prp_instance *hsr_prp_instance_create(
 	inst->cfg = *cfg;
 	inst->tc_prog_fd = -1;
 
-	/* Initialize config map values: eth_input is always groutx index 1 */
-	inst->node_indices[HSR_PRP_ROLE_ETH_INPUT] = NODE_ETH_INPUT;
-
 	/* Get local MAC from port A */
 	ret = get_interface_mac(cfg->port_a, inst->local_mac);
 	if (ret != 0)
@@ -199,6 +196,12 @@ struct hsr_prp_instance *hsr_prp_instance_create(
 		goto err_free;
 
 	egl = xgl_graph_get_egl(inst->graph);
+
+	/* Reserve eth_input index so alloc_index() won't hand it out */
+	ret = egl_graph_reserve_index(egl, NODE_ETH_INPUT);
+	if (ret != 0 && ret != -EALREADY)
+		goto err_graph;
+	inst->node_indices[HSR_PRP_ROLE_ETH_INPUT] = NODE_ETH_INPUT;
 
 	/* Allocate dynamic indices and load XDP ingress nodes */
 	if (cfg->mode == HSR_PRP_MODE_HSR) {

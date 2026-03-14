@@ -58,16 +58,19 @@ ebpf-graph-lib (egl_*)    ← generic: PROG_ARRAY, DAG, stats
 
 ## Node Indices
 
-Extension nodes occupy reserved indices 14-29 in the groutx XDP graph
-(indices 11-13 are used by groutx core):
+Extension node indices are allocated dynamically at runtime via
+`egl_graph_alloc_index()`. BPF programs read their own index and
+tail-call targets from the `hsr_prp_node_config` map (an indirection
+table from role to PROG_ARRAY index). This avoids collisions with
+other graph extensions.
 
-| Index | Node               | Type | Description                     |
-|-------|--------------------|------|---------------------------------|
-| 14    | node_hsr_ingress   | XDP  | HSR tag parse, dup detect, strip|
-| 15    | node_hsr_forward   | XDP  | Ring forwarding (XDP_REDIRECT)  |
-| 16    | node_prp_ingress   | XDP  | PRP RCT check, dup detect, strip|
-| —     | node_hsr_egress    | TC   | HSR tag insert, clone to peer   |
-| —     | node_prp_egress    | TC   | PRP RCT append, clone to peer   |
+| Role                  | Node               | Type | Description                     |
+|-----------------------|--------------------|------|---------------------------------|
+| HSR_PRP_ROLE_HSR_INGRESS | node_hsr_ingress | XDP  | HSR tag parse, dup detect, strip|
+| HSR_PRP_ROLE_HSR_FORWARD | node_hsr_forward | XDP  | Ring forwarding (XDP_REDIRECT)  |
+| HSR_PRP_ROLE_PRP_INGRESS | node_prp_ingress | XDP  | PRP RCT check, dup detect, strip|
+| —                     | node_hsr_egress    | TC   | HSR tag insert, clone to peer   |
+| —                     | node_prp_egress    | TC   | PRP RCT append, clone to peer   |
 
 ## BPF Maps
 
@@ -170,28 +173,21 @@ attachment, and supervision management.
 struct hsr_prp_config cfg;
 hsr_prp_config_init(&cfg, HSR_PRP_MODE_HSR, "eth0", "eth1");
 
-/* Create instance (loads all BPF programs, populates maps) */
+/* Create instance (loads BPF programs, allocates indices, populates maps) */
 struct hsr_prp_instance *inst =
     hsr_prp_instance_create(&cfg, "/usr/lib/bpf");
 
 /* Attach XDP + TC to both ports */
 hsr_prp_instance_attach(inst);
 
-/* Start supervision frame TX */
+/* Start supervision TX + RX and node table maintenance */
 hsr_prp_instance_start(inst);
 
-/* Start supervision frame RX + node table maintenance */
+/* Access node table */
 struct hsr_prp_nodetable *nt = hsr_prp_instance_get_nodetable(inst);
-struct hsr_prp_sup_rx *rx = hsr_prp_sup_rx_create(&cfg, nt);
-hsr_prp_sup_rx_start(rx);
 
-/* Read stats */
-struct hsr_prp_stats stats;
-hsr_prp_instance_get_stats(inst, NODE_HSR_INGRESS, &stats);
-
-/* Teardown */
-hsr_prp_sup_rx_stop(rx);
-hsr_prp_sup_rx_destroy(rx);
+/* Teardown (stops supervision, detaches BPF, frees resources) */
+hsr_prp_instance_stop(inst);
 hsr_prp_instance_destroy(inst);
 ```
 

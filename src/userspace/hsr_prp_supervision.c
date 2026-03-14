@@ -27,19 +27,22 @@ struct hsr_prp_supervision {
 	atomic_int running;
 };
 
-static int create_raw_socket(uint32_t ifindex)
+static int create_tx_socket(uint32_t ifindex)
 {
 	struct sockaddr_ll addr;
 	int sock;
 
-	sock = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
+	/*
+	 * Protocol 0: TX-only socket, no kernel receive buffer allocated.
+	 * SOCK_RAW: we build the full Ethernet frame including headers.
+	 */
+	sock = socket(AF_PACKET, SOCK_RAW, 0);
 	if (sock < 0)
 		return -errno;
 
 	memset(&addr, 0, sizeof(addr));
 	addr.sll_family = AF_PACKET;
 	addr.sll_ifindex = (int)ifindex;
-	addr.sll_protocol = htons(ETH_P_ALL);
 
 	if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
 		int err = errno;
@@ -158,13 +161,13 @@ struct hsr_prp_supervision *hsr_prp_supervision_create(
 	sup->cfg = *cfg;
 	memcpy(sup->local_mac, local_mac, ETH_ALEN);
 
-	sup->sock_a = create_raw_socket(cfg->port_a_ifindex);
+	sup->sock_a = create_tx_socket(cfg->port_a_ifindex);
 	if (sup->sock_a < 0) {
 		free(sup);
 		return NULL;
 	}
 
-	sup->sock_b = create_raw_socket(cfg->port_b_ifindex);
+	sup->sock_b = create_tx_socket(cfg->port_b_ifindex);
 	if (sup->sock_b < 0) {
 		close(sup->sock_a);
 		free(sup);

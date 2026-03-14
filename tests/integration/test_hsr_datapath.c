@@ -795,6 +795,28 @@ static void test_instance_lifecycle(void)
 		FAIL("get_nodetable returned NULL");
 	}
 
+	/* Attach XDP + TC to both ports */
+	ret = hsr_prp_instance_attach(inst);
+	if (ret != 0) {
+		hsr_prp_instance_destroy(inst);
+		delete_link(veth_a);
+		FAIL("instance_attach failed");
+	}
+
+	/* Start supervision TX + RX */
+	ret = hsr_prp_instance_start(inst);
+	if (ret != 0) {
+		hsr_prp_instance_destroy(inst);
+		delete_link(veth_a);
+		FAIL("instance_start failed");
+	}
+
+	/* Let supervision run briefly */
+	usleep(100000); /* 100ms */
+
+	/* Stop supervision */
+	hsr_prp_instance_stop(inst);
+
 	/* Clean teardown */
 	hsr_prp_instance_destroy(inst);
 	delete_link(veth_a);
