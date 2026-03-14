@@ -28,13 +28,6 @@
 #include <bpf/libbpf.h>
 #include <bpf/bpf.h>
 
-/*
- * Starting index for dynamic allocation.
- * Indices 0-12 are groutx core, 14-15 are groutx K8s (SNAT, NDP).
- * We start at 20 to avoid collisions.
- */
-#define HSR_PRP_ALLOC_BASE  20
-
 struct hsr_prp_instance {
 	struct hsr_prp_config cfg;
 	uint8_t local_mac[ETH_ALEN];
@@ -173,9 +166,9 @@ struct hsr_prp_instance *hsr_prp_instance_create(
 	const char *bpf_obj_dir)
 {
 	struct hsr_prp_instance *inst;
+	struct egl_graph *egl;
 	const char *tc_prog_name;
 	char obj_path[512];
-	int next_idx = HSR_PRP_ALLOC_BASE;
 	int ret;
 
 	if (!cfg || !bpf_obj_dir)
@@ -205,10 +198,16 @@ struct hsr_prp_instance *hsr_prp_instance_create(
 	if (!inst->graph)
 		goto err_free;
 
+	egl = xgl_graph_get_egl(inst->graph);
+
 	/* Allocate dynamic indices and load XDP ingress nodes */
 	if (cfg->mode == HSR_PRP_MODE_HSR) {
-		int hsr_ingress_idx = next_idx++;
-		int hsr_forward_idx = next_idx++;
+		int hsr_ingress_idx = egl_graph_alloc_index(egl);
+		if (hsr_ingress_idx < 0)
+			goto err_graph;
+		int hsr_forward_idx = egl_graph_alloc_index(egl);
+		if (hsr_forward_idx < 0)
+			goto err_graph;
 
 		inst->node_indices[HSR_PRP_ROLE_HSR_INGRESS] = hsr_ingress_idx;
 		inst->node_indices[HSR_PRP_ROLE_HSR_FORWARD] = hsr_forward_idx;
@@ -227,7 +226,9 @@ struct hsr_prp_instance *hsr_prp_instance_create(
 		if (ret != 0)
 			goto err_graph;
 	} else {
-		int prp_ingress_idx = next_idx++;
+		int prp_ingress_idx = egl_graph_alloc_index(egl);
+		if (prp_ingress_idx < 0)
+			goto err_graph;
 
 		inst->node_indices[HSR_PRP_ROLE_PRP_INGRESS] = prp_ingress_idx;
 
