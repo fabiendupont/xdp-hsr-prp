@@ -1,8 +1,9 @@
 #!/bin/bash
 # SPDX-License-Identifier: BSD-2-Clause
 #
-# test_hsr_ring.sh — Integration test for HSR 3-node ring.
+# test_hsr_topology.sh — Topology integration test for HSR 3-node ring.
 #
+# Tests namespace/veth setup only — does NOT load BPF programs.
 # Creates 3 network namespaces simulating an HSR ring:
 #
 #   ns1 (veth1a) ←→ (veth2a) ns2 (veth2b) ←→ (veth3a) ns3 (veth3b) ←→ (veth1b) ns1

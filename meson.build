@@ -197,9 +197,9 @@ endif
 
 # --- Integration tests ---
 
-test('hsr_ring', find_program(
+test('hsr_topology', find_program(
          meson.current_source_dir() / 'tests' / 'integration' /
-         'test_hsr_ring.sh'),
+         'test_hsr_topology.sh'),
     suite: 'integration',
     is_parallel: false,
     timeout: 120)

@@ -161,10 +161,13 @@ DeliveryIntegrity ==
             /\ e.src \in Nodes
             /\ e.seq < seq_counter[e.src]
 
-\* Every delivered entry is also in the dup_table
+\* Every delivered entry is also in the dup_table.
+\* Only valid when TableSize >= MaxSeq — with smaller tables, LRU
+\* eviction can remove a delivered entry before its duplicate arrives.
 DupTableConsistency ==
-    \A n \in Nodes :
-        delivered[n] \subseteq dup_table[n]
+    (TableSize >= MaxSeq) =>
+        \A n \in Nodes :
+            delivered[n] \subseteq dup_table[n]
 
 \* No frame delivered more than once to the same destination
 NoDuplicateDelivery ==

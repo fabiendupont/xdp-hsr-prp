@@ -27,6 +27,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <pthread.h>
+#include <sys/eventfd.h>
 #include <sys/socket.h>
 #include <linux/if_packet.h>
 #include <linux/if_ether.h>
@@ -38,6 +39,7 @@ struct hsr_prp_sup_rx {
 	struct hsr_prp_nodetable *nodetable;
 	int sock_a;
 	int sock_b;
+	int stop_fd;	/* eventfd for immediate shutdown signaling */
 	pthread_t thread;
 	atomic_int running;
 };
@@ -147,11 +149,14 @@ static void *sup_rx_thread(void *arg)
 	int maxfd;
 
 	maxfd = (rx->sock_a > rx->sock_b) ? rx->sock_a : rx->sock_b;
+	if (rx->stop_fd > maxfd)
+		maxfd = rx->stop_fd;
 
 	while (rx->running) {
 		FD_ZERO(&rfds);
 		FD_SET(rx->sock_a, &rfds);
 		FD_SET(rx->sock_b, &rfds);
+		FD_SET(rx->stop_fd, &rfds);
 
 		tv.tv_sec = 1;
 		tv.tv_usec = 0;
@@ -159,6 +164,10 @@ static void *sup_rx_thread(void *arg)
 		int ret = select(maxfd + 1, &rfds, NULL, NULL, &tv);
 		if (ret <= 0)
 			continue;
+
+		/* Stop signaled — exit immediately */
+		if (FD_ISSET(rx->stop_fd, &rfds))
+			break;
 
 		if (FD_ISSET(rx->sock_a, &rfds))
 			receive_on_socket(rx, rx->sock_a, 0);
@@ -189,8 +198,15 @@ struct hsr_prp_sup_rx *hsr_prp_sup_rx_create(
 	rx->cfg = *cfg;
 	rx->nodetable = nodetable;
 
+	rx->stop_fd = eventfd(0, EFD_NONBLOCK);
+	if (rx->stop_fd < 0) {
+		free(rx);
+		return NULL;
+	}
+
 	rx->sock_a = create_rx_socket(cfg->port_a_ifindex);
 	if (rx->sock_a < 0) {
+		close(rx->stop_fd);
 		free(rx);
 		return NULL;
 	}
@@ -198,6 +214,7 @@ struct hsr_prp_sup_rx *hsr_prp_sup_rx_create(
 	rx->sock_b = create_rx_socket(cfg->port_b_ifindex);
 	if (rx->sock_b < 0) {
 		close(rx->sock_a);
+		close(rx->stop_fd);
 		free(rx);
 		return NULL;
 	}
@@ -212,6 +229,8 @@ void hsr_prp_sup_rx_destroy(struct hsr_prp_sup_rx *rx)
 
 	hsr_prp_sup_rx_stop(rx);
 
+	if (rx->stop_fd >= 0)
+		close(rx->stop_fd);
 	if (rx->sock_a >= 0)
 		close(rx->sock_a);
 	if (rx->sock_b >= 0)
@@ -240,9 +259,15 @@ int hsr_prp_sup_rx_start(struct hsr_prp_sup_rx *rx)
 
 void hsr_prp_sup_rx_stop(struct hsr_prp_sup_rx *rx)
 {
+	uint64_t val = 1;
+
 	if (!rx || !rx->running)
 		return;
 
 	rx->running = 0;
+
+	/* Signal the eventfd to wake select() immediately */
+	(void)write(rx->stop_fd, &val, sizeof(val));
+
 	pthread_join(rx->thread, NULL);
 }
