@@ -5,15 +5,7 @@
 
 #include <linux/types.h>
 
-#ifdef __BPF__
-#include <bpf/bpf_endian.h>
-#define hsr_prp_ntohs(x) bpf_ntohs(x)
-#define hsr_prp_htons(x) bpf_htons(x)
-#else
-#include <arpa/inet.h>
-#define hsr_prp_ntohs(x) ntohs(x)
-#define hsr_prp_htons(x) htons(x)
-#endif
+#include "hsr_prp_common.h"
 
 /*
  * HSR tag: 6 bytes, inserted after Ethernet source MAC.

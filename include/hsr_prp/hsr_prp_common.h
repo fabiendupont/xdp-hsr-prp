@@ -7,9 +7,15 @@
 
 #ifdef __BPF__
 #include <linux/if_ether.h>
+#include <bpf/bpf_endian.h>
+#define hsr_prp_ntohs(x) bpf_ntohs(x)
+#define hsr_prp_htons(x) bpf_htons(x)
 #else
 #include <stdint.h>
 #include <linux/if_ether.h>
+#include <arpa/inet.h>
+#define hsr_prp_ntohs(x) ntohs(x)
+#define hsr_prp_htons(x) htons(x)
 #endif
 
 #include "hsr_tag.h"

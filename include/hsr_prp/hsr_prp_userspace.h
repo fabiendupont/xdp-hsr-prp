@@ -39,7 +39,6 @@ int hsr_prp_config_init(struct hsr_prp_config *cfg,
 			enum hsr_prp_mode mode,
 			const char *port_a, const char *port_b);
 int hsr_prp_config_validate(const struct hsr_prp_config *cfg);
-int hsr_prp_config_apply(const struct hsr_prp_config *cfg);
 
 /*
  * Map population — call after loading BPF programs.

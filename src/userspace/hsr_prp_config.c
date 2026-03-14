@@ -228,11 +228,6 @@ int hsr_prp_config_apply_maps(const struct hsr_prp_config *cfg,
 	return 0;
 }
 
-int hsr_prp_config_apply(const struct hsr_prp_config *cfg)
-{
-	return hsr_prp_config_validate(cfg);
-}
-
 /*
  * Attach a TC egress BPF program to an interface.
  *
