@@ -18,6 +18,14 @@
 
 set -euo pipefail
 
+# Skip gracefully without root (meson treats exit 77 as skipped) —
+# matches the family convention: privileged tests skip in CI and run
+# offline with sudo.
+if [ "$(id -u)" -ne 0 ]; then
+    echo "SKIP: requires root (network namespaces)"
+    exit 77
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BUILDDIR="${BUILDDIR:-$(dirname "$SCRIPT_DIR")/../../builddir}"
 
