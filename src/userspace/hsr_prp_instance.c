@@ -163,7 +163,8 @@ static int populate_node_config(struct hsr_prp_instance *inst)
 
 struct hsr_prp_instance *hsr_prp_instance_create(
 	const struct hsr_prp_config *cfg,
-	const char *bpf_obj_dir)
+	const char *bpf_obj_dir,
+	const char *prog_array_pin_path)
 {
 	struct hsr_prp_instance *inst;
 	struct egl_graph *egl;
@@ -190,8 +191,9 @@ struct hsr_prp_instance *hsr_prp_instance_create(
 	if (ret != 0)
 		goto err_free;
 
-	/* Create XDP graph */
-	inst->graph = xgl_graph_create("hsr_prp", 0);
+	/* Create XDP graph — shared or standalone */
+	inst->graph = xgl_graph_create_shared("hsr_prp", 256,
+					      prog_array_pin_path);
 	if (!inst->graph)
 		goto err_free;
 

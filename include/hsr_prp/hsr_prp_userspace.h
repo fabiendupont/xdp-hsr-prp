@@ -87,6 +87,19 @@ int hsr_prp_nodetable_dump(const struct hsr_prp_nodetable *nt,
 			   void *arg);
 
 /*
+ * Ring break detection — check for nodes missing on one port.
+ *
+ * Scans node table entries. If a node has been seen recently on one
+ * port but not the other (last_seen delta exceeds threshold_ms),
+ * the ring is likely broken on that path.
+ *
+ * Returns: bitmask — 0x01 = port A missing, 0x02 = port B missing,
+ *          0x00 = ring healthy, negative on error.
+ */
+int hsr_prp_nodetable_ring_break_check(const struct hsr_prp_nodetable *nt,
+					uint32_t threshold_ms);
+
+/*
  * Supervision frame API.
  */
 struct hsr_prp_supervision;
@@ -139,12 +152,18 @@ int hsr_prp_stats_dump(int stats_map_fd,
  * Creates the XDP graph, loads BPF programs (XDP ingress + TC egress)
  * with pinned map sharing, populates maps, and manages supervision
  * and node table subsystems.
+ *
+ * prog_array_pin_path: BPF pin path for shared PROG_ARRAY composition.
+ * If non-NULL, joins an existing PROG_ARRAY (e.g., xdp-grout's
+ * "/sys/fs/bpf/xdp_grout_prog_array") or creates/pins a new one.
+ * If NULL, creates an isolated graph (standalone mode).
  */
 struct hsr_prp_instance;
 
 struct hsr_prp_instance *hsr_prp_instance_create(
 	const struct hsr_prp_config *cfg,
-	const char *bpf_obj_dir);
+	const char *bpf_obj_dir,
+	const char *prog_array_pin_path);
 int hsr_prp_instance_attach(struct hsr_prp_instance *inst);
 int hsr_prp_instance_start(struct hsr_prp_instance *inst);
 void hsr_prp_instance_stop(struct hsr_prp_instance *inst);

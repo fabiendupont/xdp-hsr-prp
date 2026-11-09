@@ -10,6 +10,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
+#include <time.h>
 #include <pthread.h>
 #include <sys/socket.h>
 #include <linux/if_packet.h>
@@ -130,6 +131,10 @@ static int send_supervision_frame(struct hsr_prp_supervision *sup, int sock,
 static void *supervision_thread(void *arg)
 {
 	struct hsr_prp_supervision *sup = arg;
+	struct timespec next;
+	long interval_ns = (long)sup->cfg.supervision_interval_ms * 1000000L;
+
+	clock_gettime(CLOCK_MONOTONIC, &next);
 
 	while (sup->running) {
 		send_supervision_frame(sup, sup->sock_a,
@@ -139,7 +144,13 @@ static void *supervision_thread(void *arg)
 
 		sup->sup_seq_nr++;
 
-		usleep(sup->cfg.supervision_interval_ms * 1000);
+		/* Absolute-time sleep prevents drift accumulation */
+		next.tv_nsec += interval_ns;
+		while (next.tv_nsec >= 1000000000L) {
+			next.tv_nsec -= 1000000000L;
+			next.tv_sec++;
+		}
+		clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &next, NULL);
 	}
 
 	return NULL;

@@ -262,3 +262,41 @@ int hsr_prp_nodetable_dump(const struct hsr_prp_nodetable *nt,
 	pthread_mutex_unlock((pthread_mutex_t *)&nt->lock);
 	return count;
 }
+
+int hsr_prp_nodetable_ring_break_check(const struct hsr_prp_nodetable *nt,
+					uint32_t threshold_ms)
+{
+	uint64_t ts;
+	uint64_t threshold_ns;
+	int result = 0;
+
+	if (!nt || threshold_ms == 0)
+		return -EINVAL;
+
+	ts = now_ns();
+	threshold_ns = (uint64_t)threshold_ms * 1000000ULL;
+
+	pthread_mutex_lock((pthread_mutex_t *)&nt->lock);
+
+	for (uint32_t i = 0; i < nt->capacity; i++) {
+		if (!nt->entries[i].valid)
+			continue;
+
+		/*
+		 * A node seen recently on one port but not the other
+		 * indicates a ring break on the missing port's path.
+		 */
+		int a_recent = nt->entries[i].last_seen_a != 0 &&
+			       (ts - nt->entries[i].last_seen_a) < threshold_ns;
+		int b_recent = nt->entries[i].last_seen_b != 0 &&
+			       (ts - nt->entries[i].last_seen_b) < threshold_ns;
+
+		if (a_recent && !b_recent)
+			result |= 0x02; /* port B missing */
+		if (b_recent && !a_recent)
+			result |= 0x01; /* port A missing */
+	}
+
+	pthread_mutex_unlock((pthread_mutex_t *)&nt->lock);
+	return result;
+}
