@@ -1,5 +1,5 @@
 [wrap-git]
-url = https://github.com/smgglrs/xdp-graph-lib.git
+url = https://github.com/fabiendupont/xdp-graph-lib.git
 revision = main
 depth = 1
 
