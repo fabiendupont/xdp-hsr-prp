@@ -24,6 +24,8 @@
 #include <net/if.h>
 #include <sys/socket.h>
 #include <linux/if_packet.h>
+#include <bpf/bpf.h>
+#include <fcntl.h>
 #include <linux/if_ether.h>
 #include <arpa/inet.h>
 #include <bpf/libbpf.h>
@@ -78,9 +80,22 @@ static int tests_skipped;
 	} \
 } while (0)
 
+/* CI containers run as uid 0 WITHOUT CAP_BPF/CAP_NET_ADMIN — probe
+ * the actual capability (bpf_map_create), matching the xgl test
+ * convention. */
 static int have_privileges(void)
 {
-	return geteuid() == 0;
+	int fd;
+
+	if (geteuid() != 0)
+		return 0;
+
+	fd = bpf_map_create(BPF_MAP_TYPE_ARRAY, "cap_probe",
+	                    sizeof(__u32), sizeof(__u32), 1, NULL);
+	if (fd < 0)
+		return 0;
+	close(fd);
+	return 1;
 }
 
 static int bpf_obj_exists(const char *path)
@@ -259,7 +274,7 @@ static void test_tc_egress_inserts_tag(void)
 	delete_link(veth_a);
 
 	if (create_veth_pair(veth_a, veth_b) != 0)
-		FAIL("cannot create veth pair");
+		SKIP("cannot create veth pair (no CAP_NET_ADMIN)");
 
 	set_link_up(veth_a);
 	set_link_up(veth_b);
@@ -441,7 +456,7 @@ static void test_seq_counter_increments(void)
 	delete_link(veth_a);
 
 	if (create_veth_pair(veth_a, veth_b) != 0)
-		FAIL("cannot create veth pair");
+		SKIP("cannot create veth pair (no CAP_NET_ADMIN)");
 
 	set_link_up(veth_a);
 	set_link_up(veth_b);
@@ -557,7 +572,7 @@ static void test_prp_egress_appends_rct(void)
 	delete_link(veth_a);
 
 	if (create_veth_pair(veth_a, veth_b) != 0)
-		FAIL("cannot create veth pair");
+		SKIP("cannot create veth pair (no CAP_NET_ADMIN)");
 
 	set_link_up(veth_a);
 	set_link_up(veth_b);
@@ -766,7 +781,7 @@ static void test_instance_lifecycle(void)
 	delete_link(veth_b);
 
 	if (create_veth_pair(veth_a, veth_b) != 0)
-		FAIL("cannot create veth pair");
+		SKIP("cannot create veth pair (no CAP_NET_ADMIN)");
 
 	set_link_up(veth_a);
 	set_link_up(veth_b);
@@ -780,7 +795,7 @@ static void test_instance_lifecycle(void)
 	}
 
 	struct hsr_prp_instance *inst =
-		hsr_prp_instance_create(&cfg, BPF_OBJ_DIR);
+		hsr_prp_instance_create(&cfg, BPF_OBJ_DIR, NULL);
 	if (!inst) {
 		delete_link(veth_a);
 		FAIL("instance_create returned NULL");

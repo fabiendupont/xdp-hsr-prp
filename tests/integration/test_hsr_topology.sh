@@ -21,10 +21,17 @@ set -euo pipefail
 # Skip gracefully without root (meson treats exit 77 as skipped) —
 # matches the family convention: privileged tests skip in CI and run
 # offline with sudo.
-if [ "$(id -u)" -ne 0 ]; then
-    echo "SKIP: requires root (network namespaces)"
+# CI containers run as uid 0 WITHOUT capabilities — probe actual
+# ability to create network namespaces, and skip without iproute2.
+if ! command -v ip >/dev/null 2>&1; then
+    echo "SKIP: iproute2 not installed"
     exit 77
 fi
+if [ "$(id -u)" -ne 0 ] || ! ip netns add _cap_probe 2>/dev/null; then
+    echo "SKIP: requires root with CAP_NET_ADMIN (network namespaces)"
+    exit 77
+fi
+ip netns del _cap_probe 2>/dev/null || true
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BUILDDIR="${BUILDDIR:-$(dirname "$SCRIPT_DIR")/../../builddir}"
