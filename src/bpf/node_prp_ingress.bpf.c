@@ -36,7 +36,8 @@ XGL_NODE(node_prp_ingress)
 	struct prp_rct *rct;
 	struct dup_key dkey;
 	struct dup_entry dval;
-	__u32 pkt_len;
+	__u64 pkt_len; /* 64-bit: u32 forces 32-bit pointer
+	                    * arithmetic, which PREVAIL rejects */
 	__u16 seq_nr;
 	__u16 lsdu_size;
 	__u32 role;
@@ -62,7 +63,7 @@ XGL_NODE(node_prp_ingress)
 	eth = data;
 
 	/* Need at least Ethernet header + PRP RCT */
-	pkt_len = (__u32)(data_end - data);
+	pkt_len = data_end - data;
 	if (pkt_len < sizeof(struct ethhdr) + PRP_RCT_SIZE) {
 		/* Too short for PRP — pass through as normal frame */
 		XGL_STATS_INC_RX(hsr_prp_stats, *self_idx, pkt_len);
@@ -90,13 +91,14 @@ XGL_NODE(node_prp_ingress)
 	 * Validate LSDU size against actual packet length.
 	 * LSDU size in PRP includes the RCT itself.
 	 * Expected: pkt_len - 14 (Ethernet header) = LSDU size.
-	 * This check rejects false positives where 0x88FB appears
-	 * in payload but the size doesn't match.
+	 * Allow padding: actual length may exceed LSDU (switches pad
+	 * to minimum frame size). Reject truncated frames and
+	 * mismatches that indicate a false positive 0x88FB suffix.
 	 */
 	lsdu_size = prp_rct_get_lsdu_size(rct);
-	__u16 expected_lsdu = (__u16)(pkt_len - sizeof(struct ethhdr));
+	__u16 actual_lsdu = (__u16)(pkt_len - sizeof(struct ethhdr));
 
-	if (lsdu_size != expected_lsdu) {
+	if (lsdu_size > actual_lsdu || lsdu_size < PRP_RCT_SIZE) {
 		/* LSDU mismatch — not a real PRP RCT (false positive) */
 		goto pass_through;
 	}
@@ -161,7 +163,7 @@ pass_through:
 
 	data_end = (void *)(long)ctx->data_end;
 	data = (void *)(long)ctx->data;
-	pkt_len = (__u32)(data_end - data);
+	pkt_len = data_end - data;
 
 	XGL_STATS_INC_TX(hsr_prp_stats, *self_idx, pkt_len);
 

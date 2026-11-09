@@ -34,7 +34,8 @@ XGL_NODE(node_hsr_ingress)
 	struct hsr_tag *tag;
 	struct dup_key dkey;
 	struct dup_entry dval;
-	__u32 pkt_len;
+	__u64 pkt_len; /* 64-bit: u32 forces 32-bit pointer
+	                    * arithmetic, which PREVAIL rejects */
 	__u16 seq_nr;
 	__u8 saved_dst[ETH_ALEN];
 	__u8 saved_src[ETH_ALEN];
@@ -66,18 +67,19 @@ XGL_NODE(node_hsr_ingress)
 		XGL_DROP();
 	}
 
-	pkt_len = (__u32)(data_end - data);
+	pkt_len = data_end - data;
 	XGL_STATS_INC_RX(hsr_prp_stats, *self_idx, pkt_len);
 
 	tag = (struct hsr_tag *)((void *)(eth + 1));
 
 	/* Validate LSDU size against actual packet length.
 	 * LSDU size = frame length after Ethernet header (includes HSR tag).
-	 * Strict equality rejects truncated or padded-beyond-LSDU frames. */
+	 * Allow padding: actual length may exceed LSDU (switches pad to
+	 * minimum frame size). Reject truncated frames (actual < LSDU). */
 	__u16 lsdu_size = hsr_tag_get_lsdu_size(tag);
-	__u16 expected = (__u16)(pkt_len - sizeof(struct ethhdr));
+	__u16 actual_lsdu = (__u16)(pkt_len - sizeof(struct ethhdr));
 
-	if (lsdu_size != expected) {
+	if (lsdu_size > actual_lsdu) {
 		XGL_STATS_INC_DROP(hsr_prp_stats, *self_idx);
 		XGL_DROP();
 	}
@@ -164,7 +166,7 @@ XGL_NODE(node_hsr_ingress)
 		XGL_DROP();
 	}
 
-	pkt_len = (__u32)(data_end - data);
+	pkt_len = data_end - data;
 	XGL_STATS_INC_TX(hsr_prp_stats, *self_idx, pkt_len);
 
 	/* Read eth_input index from config map */

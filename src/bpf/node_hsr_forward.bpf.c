@@ -44,7 +44,8 @@ XGL_NODE(node_hsr_forward)
 	struct ethhdr *eth;
 	struct ring_port_config *cfg;
 	__u32 ingress_ifindex;
-	__u32 pkt_len;
+	__u64 pkt_len; /* 64-bit: u32 forces 32-bit pointer
+	                    * arithmetic, which PREVAIL rejects */
 	__u32 peer_ifindex;
 	__u32 role;
 	__u32 *self_idx;
@@ -72,7 +73,7 @@ XGL_NODE(node_hsr_forward)
 		XGL_DROP();
 	}
 
-	pkt_len = (__u32)(data_end - data);
+	pkt_len = data_end - data;
 	XGL_STATS_INC_RX(hsr_prp_stats, *self_idx, pkt_len);
 
 	/* Do not forward frames originated by us (prevents ring loops) */
