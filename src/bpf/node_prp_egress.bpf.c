@@ -27,7 +27,7 @@
 
 #include <egl/bpf/egl_common.bpf.h>
 
-char LICENSE[] SEC("license") = "BSD-3-Clause";
+char LICENSE[] SEC("license") = "BSD-2-Clause";
 
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);

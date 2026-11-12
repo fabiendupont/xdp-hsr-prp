@@ -215,4 +215,4 @@ and `hsr_prp_supervision_*`. See `hsr_prp_userspace.h` for details.
 
 ## License
 
-BSD-3-Clause. See [LICENSE](LICENSE).
+BSD-2-Clause. See [LICENSE](LICENSE).

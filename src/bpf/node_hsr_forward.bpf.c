@@ -35,7 +35,7 @@
 #include <linux/if_ether.h>
 #include <bpf/bpf_endian.h>
 
-char LICENSE[] SEC("license") = "BSD-3-Clause";
+char LICENSE[] SEC("license") = "BSD-2-Clause";
 
 XGL_NODE(node_hsr_forward)
 {

@@ -32,7 +32,7 @@
 
 #include <egl/bpf/egl_common.bpf.h>
 
-char LICENSE[] SEC("license") = "BSD-3-Clause";
+char LICENSE[] SEC("license") = "BSD-2-Clause";
 
 /*
  * Maps shared with XDP programs via pinning.

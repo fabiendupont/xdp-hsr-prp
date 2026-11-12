@@ -5,7 +5,7 @@
 - **Purpose**: IEC 62439-3 HSR and PRP as pluggable xdp-graph-lib nodes
 - **Language**: Pure C11
 - **Build system**: Meson
-- **License**: BSD-3-Clause
+- **License**: BSD-2-Clause
 - **Depends on**: xdp-graph-lib (for XDP ingress nodes), ebpf-graph-lib (for TC egress nodes)
 - **Research doc**: `~/Work/Sandbox/research/02-hsr-prp-xdp-redundancy.md`
 - **Reference code**: `~/Code/github.com/smgglrs/iec-61850-c/iec-61850-c/src/redundancy/hsr_prp.c`
