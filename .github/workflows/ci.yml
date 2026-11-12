@@ -46,7 +46,8 @@ jobs:
     container: fedora:45
     steps:
       - name: Install dependencies
-        run: dnf install -y git meson ninja-build gcc clang libbpf-devel \
+        run: |
+          dnf install -y git meson ninja-build gcc clang libbpf-devel \
             libxdp-devel elfutils-libelf-devel pkgconf-pkg-config iproute \
             cmake gcc-c++ boost-devel yaml-cpp-devel
       - uses: actions/checkout@v4
