@@ -25,3 +25,6 @@ verification/tlaplus/states/
 # OS
 .DS_Store
 Thumbs.db
+subprojects/xdp-graph-lib/
+subprojects/ebpf-graph-lib/
+subprojects/.wraplock
