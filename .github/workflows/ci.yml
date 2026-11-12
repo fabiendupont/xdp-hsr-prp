@@ -18,7 +18,7 @@ permissions:
 
 env:
   PREVAIL_REPO: https://github.com/vbpf/prevail.git
-  PREVAIL_REF: 8364e784ee69366ec643106930146f3848339254
+  PREVAIL_REF: 97093b5b3264e8439a56824e93710bdd8a7e0393
 
 jobs:
   build-and-test:
