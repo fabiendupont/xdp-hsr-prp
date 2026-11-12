@@ -1,0 +1,97 @@
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# CI for xdp-hsr-prp: build + unit tests (Fedora, matching the
+# toolchain the code is validated on), the PREVAIL bytecode
+# verification gate (pinned verifier build, cached), and the
+# privileged integration tests (GitHub ubuntu runners allow root,
+# unlike the previous CI environment where they were skipped).
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  PREVAIL_REPO: https://github.com/vbpf/prevail.git
+  PREVAIL_REF: 8364e784ee69366ec643106930146f3848339254
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    container: fedora:43
+    steps:
+      - name: Install dependencies
+        run: |
+          dnf install -y git meson ninja-build gcc clang libbpf-devel \
+            libxdp-devel elfutils-libelf-devel pkgconf-pkg-config iproute
+      - uses: actions/checkout@v4
+      - name: Build
+        run: |
+          meson setup builddir
+          meson compile -C builddir
+      - name: Unit tests
+        run: meson test -C builddir --suite unit -v --print-errorlogs
+
+  # PREVAIL bytecode-level verification gate: deterministic and
+  # kernel-independent — the same object either verifies or it does
+  # not, on any machine. Expected-failure entries are asserted to
+  # still fail (see scripts/prevail-check.sh).
+  prevail:
+    runs-on: ubuntu-latest
+    container: fedora:43
+    steps:
+      - name: Install dependencies
+        run: dnf install -y git meson ninja-build gcc clang libbpf-devel \
+            libxdp-devel elfutils-libelf-devel pkgconf-pkg-config iproute \
+            cmake gcc-c++ boost-devel yaml-cpp-devel
+      - uses: actions/checkout@v4
+      - name: Build BPF objects
+        run: |
+          meson setup builddir
+          ninja -C builddir node_hsr_ingress.bpf.o node_hsr_egress.bpf.o \
+            node_hsr_forward.bpf.o node_prp_ingress.bpf.o node_prp_egress.bpf.o
+      - name: Build PREVAIL (pinned, cached)
+        uses: actions/cache@v4
+        with:
+          path: prevail/
+          key: prevail-${{ env.PREVAIL_REF }}
+      - name: Compile PREVAIL
+        run: |
+          if [ -x prevail/bin/prevail ]; then
+            echo "prevail restored from cache"
+          else
+            git clone --recurse-submodules "$PREVAIL_REPO" prevail
+            git -C prevail checkout "$PREVAIL_REF"
+            cmake -S prevail -B prevail/build -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_ENABLE_TESTS=OFF
+            cmake --build prevail/build --target prevail-cli -j "$(nproc)"
+          fi
+      - name: Run verification gate
+        run: bash scripts/prevail-check.sh prevail/bin/prevail builddir
+
+  # Privileged integration tests: veth pairs, actual BPF program
+  # loads, HSR frame injection. These need root; the runner allows
+  # passwordless sudo.
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq meson ninja-build gcc clang \
+            libbpf-dev libxdp-dev libelf-dev pkg-config iproute2 >/dev/null
+          # clang -target bpf does not search the multiarch include
+          # dir where the kernel UAPI headers' <asm/types.h> lives.
+          sudo ln -sf x86_64-linux-gnu/asm /usr/include/asm
+      - name: Build
+        run: |
+          meson setup builddir
+          meson compile -C builddir
+      - name: Integration tests (root)
+        run: sudo -E meson test -C builddir --suite integration -v --print-errorlogs
